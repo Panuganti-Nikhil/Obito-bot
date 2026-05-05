@@ -32,6 +32,15 @@ async def on_ready():
     log.info(f"logged in as {bot.user} (ID: {bot.user.id})")
     log.info(f"owner ID: {bot.owner_id}")
     log.info(f"loaded {len(bot.cogs)} categories from cmds.py")
+    
+    # Voice readiness check
+    try:
+        from discord import opus
+        voice_support = "Ready" if opus.is_loaded() else "Opus not loaded (expected on Windows, usually fine on Linux/Render)"
+        log.info(f"Voice/Opus Support: {voice_support}")
+    except Exception as e:
+        log.warning(f"Voice check failed: {e}")
+
     await bot.change_presence(
         activity=discord.Activity(type=discord.ActivityType.watching, name=f"{len(bot.guilds)} servers | !help")
     )
