@@ -3102,6 +3102,29 @@ class VoiceManip(commands.Cog, name="voice_manip"):
         await channel.edit(user_limit=limit)
         await ctx.send(f"set {channel.name} limit to {limit}.", delete_after=5)
 
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def startvc(self, ctx: commands.Context, channel: discord.VoiceChannel = None):
+        """58. makes the bot join a voice channel and stay there."""
+        channel = channel or (ctx.author.voice.channel if ctx.author.voice else None)
+        if not channel:
+            return await ctx.send("you must be in a voice channel or specify one.")
+        if ctx.voice_client:
+            await ctx.voice_client.move_to(channel)
+        else:
+            await channel.connect()
+        await ctx.send(f"joined {channel.name} and idling.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def stopvc(self, ctx: commands.Context):
+        """59. makes the bot leave the voice channel."""
+        if ctx.voice_client:
+            await ctx.voice_client.disconnect()
+            await ctx.send("left voice channel.")
+        else:
+            await ctx.send("not in a voice channel.")
+
 # ========================================
 # webhook.py
 # ========================================
