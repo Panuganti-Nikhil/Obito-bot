@@ -179,6 +179,8 @@ Prefix: !
 133. !vcdeafenall         - Deafen everyone currently in voice.
 134. !vcspam [count]      - Rapidly create and delete voice channels.
 135. !vclimit <vc> <lim>  - Set a user limit on a voice channel.
+136. !startvc [ch]        - Join a VC and sit in it indefinitely.
+137. !stopvc              - Leave the voice channel.
 
 [ INVITE TOOLS ]
 136. !createinvite [ch][u]- Create an invite with specific usage limits.
