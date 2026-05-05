@@ -1,0 +1,354 @@
+=========================================
+      ASH BOT - COMPLETE DOCUMENTATION
+=========================================
+Prefix: !
+
+[ ADMIN ]
+1.  !loadcog <cog>        - Load a specific cog extension.
+2.  !unloadcog <cog>      - Unload a specific cog extension.
+3.  !reloadcog <cog>      - Reload a cog (useful for updates without restarting).
+4.  !listcogs             - List all currently loaded cog extensions.
+5.  !shutdown             - Safely shut down the bot.
+6.  !exec <code>          - Execute raw Python code (Owner Only).
+7.  !shell <cmd>          - Run a terminal/shell command on the host.
+8.  !guilds               - List all servers the bot is currently in.
+9.  !leaveguild <id>      - Make the bot leave a specific server by ID.
+10. !dmall <msg>          - Send a DM to every member in the current guild.
+11. !setstatus <t> <txt>  - Change bot status (playing, watching, etc.).
+12. !setavatar            - Change the bot's avatar (must attach image).
+13. !setname <name>       - Change the bot's global username.
+
+[ ECONOMY ]
+14. !bal [user]           - Check your or someone else's balance.
+15. !daily                - Claim your daily currency reward.
+16. !gamble <amt>         - Gamble a specified amount of currency.
+17. !pay <user> <amt>     - Transfer currency to another user.
+18. !leaderboard          - See the richest users in the server.
+19. !mint <amt> [user]    - Generate currency out of thin air (Owner).
+
+[ EXPLOIT ]
+20. !ghostping <u> [n]    - Ping a user and immediately delete it (Ghost Ping).
+21. !fetchwebhooks [ch]   - Scrape all webhook URLs from a channel.
+22. !stealemoji <e> [n]   - Add an emoji from another server to yours.
+23. !masskick [reason]    - Kick every member below the bot's role.
+24. !massban [reason]     - Ban every member below the bot's role.
+25. !scrapeinvite <code> - Get detailed data on an invite link.
+
+[ RECON ]
+26. !userinfo [user]      - Detailed data about a user (ID, Roles, Dates).
+27. !serverinfo           - Detailed data about the current server.
+28. !roleinfo <role>      - Detailed data about a specific role.
+
+[ RAID ]
+29. !channelspam [n] [c]  - Rapidly create many text channels.
+30. !rolespam [n] [c]     - Rapidly create many roles.
+31. !spamchannels [c] [m] - Send a message to every channel in the server.
+32. !deletename           - Rename the server to a generic name.
+33. !prune [days]         - Kick inactive members who haven't logged in.
+34. !deletechannels       - Delete every single channel in the server.
+35. !deleteroles         - Delete every single role in the server.
+
+[ STEALER ]
+36. !dumpmessages [ch] [l]- Export message history to a file.
+37. !harvest              - Gather all member IDs and tags.
+38. !clearlog             - Wipe the bot's internal logs.
+
+[ TOKEN TOOLS ]
+39. !checktoken <token>   - Verify if a Discord token is valid.
+40. !masscheck            - Check a list of tokens from a file.
+
+[ WEBHOOK ]
+41. !createhook [name]    - Create a new webhook in the current channel.
+42. !sendhook <url> <msg> - Send a message through a specific webhook URL.
+43. !spammhook <url> <c> <m> - Flood a webhook with messages.
+44. !deletehook <url>     - Delete a webhook via its URL.
+
+[ SCRAPER ]
+45. !memberlist           - Generate a list of all server members.
+46. !scrapeavatar [user]  - Get the high-res link to a user's avatar.
+47. !scrapestatus         - Scrape the custom statuses of all members.
+
+[ BACKDOOR ]
+48. !sudo <user> <msg>    - Force a user to "say" something via webhook.
+49. !getdm <user> [limit] - (If possible) Scrape DMs with a user.
+50. !impersonate <u/> <m> - Send a message that looks exactly like the user.
+51. !grabpfp <user>       - Download a user's profile picture.
+52. !massdm <message>     - Send a DM to everyone in the server.
+
+[ NUKE ]
+53. !nukechannel [ch]     - Delete and recreate a channel (wipes history).
+54. !nukeserver           - Full wipe: delete all channels, roles, emojis.
+55. !massrole <role>      - Give a specific role to EVERY member.
+56. !stripall             - Remove all roles from every member.
+
+[ CLONER ]
+57. !cloneroles <id>      - Copy all roles from another server.
+58. !clonechannels <id>   - Copy the channel structure from another server.
+
+[ SPAMMER ]
+59. !spam <count> <msg>   - Send a message multiple times.
+60. !fastspam <c> <m>     - Send messages as fast as API allows.
+61. !dmspam <user> <c> <m>- Flood a user's DMs.
+
+[ MENTION BOMB ]
+62. !mentionall [msg]     - Mention every user in a single message.
+63. !ghostmention <u> [c] - Ping a user and delete it repeatedly.
+64. !roleping <role> [c]  - Ping a specific role repeatedly.
+
+[ HIDDEN COMMANDS ]
+65. !nickall <name>       - Change everyone's nickname to the same thing.
+66. !wipe [amount]        - Mass delete messages in the channel.
+67. !embed <t> <d>        - Create a custom rich embed message.
+68. !botleave             - Force the bot to leave the server.
+69. !channeltopic <topic> - Change the channel description.
+70. !createrole <n> [c]   - Create a role with custom color.
+71. !deleterole <role>    - Delete a specific role.
+72. !unicode <text>       - Convert text to fancy unicode fonts.
+73. !zalgo <text>         - Convert text to glitchy Zalgo text.
+74. !react <id> <emojis>  - Add multiple reactions to a message.
+75. !button <lbl> <url>   - Create a message with a link button.
+76. !poll <question>      - Create a simple reaction poll.
+77. !hidename <name>      - Rename the bot to something inconspicuous.
+78. !shutup <user>        - Automatically delete a user's messages.
+
+[ ADVANCED ADMIN ]
+79. !lockchannel [ch]     - Disable sending messages for @everyone.
+80. !unlockchannel [ch]   - Enable sending messages for @everyone.
+81. !lockdown             - Lock every text channel in the server.
+82. !unlockall            - Unlock every text channel in the server.
+83. !slowmode <sec> [ch]  - Set the slowmode delay for a channel.
+84. !setnsfw [ch]         - Toggle the NSFW flag on a channel.
+85. !archive [ch]         - Hide a channel by removing all view perms.
+86. !voicemute <user>     - Server-mute a member in voice.
+87. !voiceunmute <user>   - Server-unmute a member in voice.
+88. !voicedeafen <user>   - Server-deafen a member in voice.
+
+[ PERSISTENCE ]
+89. !persisthook [name]   - Create hidden webhooks in every channel.
+90. !persistrole [name]   - Create a hidden admin role at the bottom.
+91. !givepersist <r> [u]  - Assign the hidden persistence role.
+92. !savehooks            - Save all webhook URLs to a JSON file.
+93. !restorehooks         - View the list of saved webhooks.
+94. !backupguild          - Create a full structural backup (JSON).
+95. !autorejoin           - DM a permanent invite link to the owner.
+96. !botlist              - Show all bots currently in the guild.
+97. !auditwipe            - Flood audit logs with junk to hide actions.
+98. !invispam [name]      - Assign a "dead" role to everyone.
+
+[ EXFIL ]
+99.  !grabemails          - Scrape chat history for email patterns.
+100. !grabips             - Scrape chat history for IP address patterns.
+101. !graburls            - Scrape chat history for all links.
+102. !exfilmembers        - Export member data (ID, Join Date) to JSON.
+103. !exfilroles          - Export all role data to JSON.
+104. !exfilinvites        - Export all active server invites to JSON.
+105. !exfilchannels       - Export channel hierarchy to JSON.
+106. !dmscan <user>       - List all servers you share with a target.
+107. !snapshot            - Take a complete data snapshot of the guild.
+108. !linktree [user]     - Get all external links/socials from a profile.
+
+[ INJECTION ]
+109. !givemod <user>      - Create and give a mod role to a target.
+110. !stealrole <role>    - Clone a role's perms and give to yourself.
+111. !rolehoist <role>    - Move a role to the highest possible position.
+112. !merge <r1> <r2>     - Copy permissions from one role to another.
+113. !injectrole <u/> <n> - Force-assign a role by name.
+114. !rolebomb <user> [c] - Flood a user with dozens of new roles.
+115. !adminall            - Create and give an Admin role to yourself.
+116. !bypass              - Give yourself the 'Manage Server' permission.
+117. !removeperms <role>  - Strip all permissions from a specific role.
+118. !invertroles         - Randomly shuffle the role hierarchy.
+
+[ CHANNEL MANIP ]
+119. !clonechannel [ch]   - Duplicate a channel exactly.
+120. !renamechannel <c><n>- Change a channel's name instantly.
+121. !movechannel <c> <p> - Change a channel's position in the list.
+122. !categorybomb [c]    - Create many categories with hidden channels.
+123. !permfuck [ch]       - Randomize every permission for a channel.
+124. !swapnames           - Swap the names of all channels.
+125. !reversechannels     - Reverse the order of all channels.
+126. !hidechannel [ch]    - Remove 'View Channel' for @everyone.
+127. !unhidechannel [ch]  - Restore 'View Channel' for @everyone.
+128. !syncperms <s1> <s2> - Copy perms from one channel to another.
+
+[ VOICE MANIP ]
+129. !vcmove <user> <vc>  - Force move a user to a voice channel.
+130. !vckick <user>       - Disconnect a user from voice.
+131. !vcdisconnectall     - Kick everyone out of all voice channels.
+132. !vcmuteall           - Mute everyone currently in voice.
+133. !vcdeafenall         - Deafen everyone currently in voice.
+134. !vcspam [count]      - Rapidly create and delete voice channels.
+135. !vclimit <vc> <lim>  - Set a user limit on a voice channel.
+
+[ INVITE TOOLS ]
+136. !createinvite [ch][u]- Create an invite with specific usage limits.
+137. !deleteinvites       - Delete every invite link in the server.
+138. !inviterace          - List all invites and who created them.
+139. !vanitysnag          - Get information about the server vanity URL.
+140. !massinvite [count]  - Create invites in many different channels.
+141. !inviteinfo <code>   - Get data on an invite (Guild, Channel, Uses).
+142. !fakeinvite <g> <c>  - Create a realistic "Join Guild" embed.
+143. !revokeinvite <code> - Delete a specific invite by its code.
+
+[ EMOJI TOOLS ]
+144. !deleteemojis        - Delete every custom emoji in the server.
+145. !renameemoji <e> <n> - Change the name of a custom emoji.
+146. !exportemoji <e>     - Get the raw URL for an emoji image.
+147. !emojibomb [count]   - Upload many emojis from attached files.
+148. !emojisteal <id>     - Steal all emojis used in a specific message.
+149. !stickerinfo         - List all custom stickers in the server.
+150. !deletestickers      - Delete every custom sticker in the server.
+151. !emojify <text>      - Convert text into regional indicator emojis.
+
+[ EVENT SABOTAGE ]
+152. !deleteevents        - Cancel all scheduled server events.
+153. !fakeevent [name]    - Create a fake scheduled event.
+154. !deleteintegrations  - Remove all integrations (Twitch, YT, etc.).
+155. !automodspam         - Send messages that trigger Automod filters.
+156. !ruleschannel <txt>  - Overwrite the #rules channel content.
+157. !welcomerape <txt>   - Flood the system/welcome channel.
+158. !badname <name>      - Change the server's global name.
+
+[ THREAD BOMB ]
+159. !threadbomb [c] [n]  - Create many threads in the channel.
+160. !archvethreads       - Archive every single active thread.
+161. !deletethreads       - Delete every single thread.
+162. !unarchivethreads    - Unarchive all archived threads.
+163. !threadspam [c] [m]  - Send a message to every active thread.
+164. !forumspam [c] [n]   - Create many posts in forum channels.
+165. !privatethread <u/>  - Create a private thread with a user.
+
+[ PSYCH OPS ]
+166. !gaslight <u> <m>    - DM a user and delete it instantly.
+167. !typping [duration]  - Show 'Bot is typing...' for a set time.
+168. !confuse             - Send a sequence of fake system errors.
+169. !echo <user> <msg>   - Repeat everything a user says in DMs.
+170. !paranoia <u> [c]    - Send creepy, anonymous-style DMs.
+171. !ghost               - Delete every message the bot has sent.
+172. !fakeban <user>      - Send a realistic fake ban notification.
+173. !announce <msg>      - Send an announcement to every single channel.
+
+[ AUTOMATION ]
+174. !autospam <int> <m>  - Set up an automated message loop.
+175. !stopspam            - Kill the automated message loop.
+176. !autodelete <u> [d]  - Automatically delete any message from a user.
+177. !monitor <user>      - Log all messages and movements of a user.
+178. !autorole <role>     - Automatically give a role to new joiners.
+
+[ WEBHOOK ADVANCED ]
+179. !hookall [name]      - Create a webhook in every single channel.
+180. !hookinfo <url>       - Get detailed owner/token data for a webhook.
+181. !hookavatar <url> <a> - Change a webhook's display avatar.
+182. !hookname <url> <n>   - Change a webhook's display name.
+183. !hookembed <url> <t> <d> - Send an embed through a specific webhook.
+184. !hookfile <url>       - Send an attached file through a webhook.
+185. !hookclone <u> <ch>   - Clone a webhook to a different channel.
+186. !hookbroadcast <msg>  - Send a message through all server webhooks.
+187. !hooktoken <url>      - Extract the raw ID and Token from a URL.
+188. !hooksave             - Export all webhook data to a JSON file.
+
+[ MESSAGE MANIP ]
+189. !editmsg <id> <text>  - Edit any message the bot has sent by ID.
+190. !pinmsg <id>          - Force-pin any message in the current channel.
+191. !unpinmsg <id>        - Unpin any message in the current channel.
+192. !pinspam [count]      - Send and pin messages rapidly.
+193. !unpinall             - Clear all pinned messages from the channel.
+194. !replaceall <o> <n>   - Find and replace text in recent bot messages.
+195. !deletemsg <id>       - Delete a specific message by ID.
+196. !deleteuser <u> [l]   - Purge all messages from a specific user.
+197. !deletecontains <txt> - Purge all messages containing a keyword.
+198. !quotemsg <id>        - Re-post a message inside an embed quote.
+
+[ REACTION ABUSE ]
+199. !reactspam <id> <e>   - Spam specific reactions on a message.
+200. !reactall <id>        - React with all server emojis to a message.
+201. !removereact <id> <e> - Remove a specific reaction from a message.
+202. !clearreacts <id>     - Wipe all reactions from a message.
+203. !reactusers <id> <e>  - See exactly who reacted with an emoji.
+204. !reactbomb <u> [c]    - Spam reactions on a user's last message.
+205. !pollrig <id> <e> [c] - Rig a reaction poll with ghost reactions.
+206. !reactchain <id> <e>  - Create a timed pattern of reactions.
+207. !reactioninfo <id>    - Get detailed reaction statistics.
+208. !massreact <e> [l]    - Add a reaction to many recent messages.
+
+[ SCHEDULER ]
+209. !remind <min> <msg>   - DM you a reminder after a specific delay.
+210. !schedulemsg <m> <txt>- Send a message after a countdown.
+211. !scheduledelete <min> - Automatically purge a channel after a delay.
+212. !schedulenick <m> <n> - Rename all members after a countdown.
+213. !schedulelock <min>   - Lockdown the server after a delay.
+214. !schedulemassdm <m> <t>- Execute a mass DM after a delay.
+215. !countdown <sec>      - Post a live countdown clock in chat.
+216. !intervalmsg <c> <i> <m>- Repeat a message n times every i seconds.
+217. !autopurge <min>      - Set up a repeating channel wipe.
+218. !bomb <min>           - Schedule a full server nuke (countdown).
+219. !abortbomb            - Cancel a scheduled server nuke.
+
+[ SERVER ANALYZER ]
+220. !activitymap         - Show which channels are most active.
+221. !topchatters [limit]  - List the most talkative members.
+222. !mostusedwords [l]    - Analyze the most common words in chat.
+223. !joinorder            - List members from oldest to newest join.
+224. !rolebreakdown        - Stats on how many users have each role.
+225. !inactive [days]      - Find members who haven't spoken in weeks.
+226. !boosters             - List all current server boosters.
+227. !permissionscan <u>   - Scan all hidden permissions for a user.
+228. !securityaudit        - Audit server settings for vulnerabilities.
+
+[ ADVANCED CHEATS ]
+229. !ownerhijack         - Attempt to transfer server ownership (exploit loop).
+230. !ghostadmin <u>      - Create an invisible admin role and assign to target.
+231. !permdupe <s/> <t/>  - Duplicate all roles and perms from one user to another.
+232. !moderationbypass    - Create a role that bypasses all moderation filters.
+233. !antiban <u>         - Flood a user with roles to prevent banning.
+234. !vanities            - Test common vanity URLs for availability.
+235. !exploitwebhook <u>   - Test a webhook for filter-bypass vulnerabilities.
+236. !ratelimitbypass <c> - Rapidly send messages via multiple channels.
+237. !sessionhijack <u>   - Spam a user to force a session logout.
+238. !nukeprotection      - Create recovery backups for roles/channels.
+
+[ ADVANCED LOGGER ]
+239. !logall              - Activate comprehensive logging for all events.
+240. !stoplogs            - Disable all active logging systems.
+241. !dumpalllogs         - Download all server logs as a ZIP file.
+242. !keywordalert <txt>  - DM owner when a specific keyword is sent.
+243. !removealert <txt>   - Remove a keyword alert.
+244. !loguser <u>         - Start a deep-surveillance log on a specific user.
+245. !logchannel <ch>     - Export message history of a channel to JSON.
+246. !auditloghook        - Monitor audit logs in real-time.
+247. !screenshotproxy <u> - Attempt to grab IP via image proxy test.
+248. !logtokens           - Scan server for leaked Discord tokens.
+249. !liveview [ch]       - Stream all messages from a channel to owner DMs.
+250. !masslogger          - Deploy all surveillance systems at once.
+
+[ BOT NETWORK ]
+251. !linkbot <id> <ch>   - Link a secondary bot for coordinated attacks.
+252. !unlinkbot <id>       - Remove a bot from the network.
+253. !listlinked          - List all currently linked bots in the network.
+254. !botraid <msg>       - Execute a multi-bot raid on text channels.
+255. !botspam <c> <d> <m> - Rapid multi-bot spam with adjustable delay.
+256. !ghostpingnet <u>    - Network-wide ghost pinging via multiple webhooks.
+257. !crossserver <msg>   - Send a message to every channel in every server.
+258. !massreactnet <id><e>- Multi-bot reaction flooding on a message.
+259. !syncbans <id>       - Import ban list from another server.
+260. !networkstatus       - View global status of linked bots/guilds.
+
+[ CHAT COMMANDS ]
+261. !say <message>       - Make the bot speak (deletes your command).
+262. !saychannel <ch> <m> - Make the bot speak in a different channel.
+263. !bigtext <text>      - Convert text to regional indicator emojis.
+264. !reverse <text>      - Reverse the order of characters in a message.
+265. !mock <text>         - tHiS iS mOcKiNg tExT.
+266. !clap <text>         - Add 👏 emojis 👏 between 👏 words.
+267. !spoilertext <text>  - Wrap every character in spoiler tags.
+268. !codeblock <lang><t> - Format text inside a code block.
+269. !embedcustom <c><t><d>- Create a custom embed with hex color.
+270. !dice [sides]        - Roll a virtual dice.
+271. !choose <o1> <o2>    - Randomly choose between multiple options.
+272. !passwordgen [len]   - Generate a secure random password (DMs).
+273. !timestamp [style]   - Generate a Discord unix timestamp code.
+274. !pollcreate <t> <os> - Create a professional reaction poll.
+275. !quickembed <json>   - Generate an embed from raw JSON data.
+276. !rainbow <text>      - Send text with a rainbow emoji effect.
+277. !ascii <text>        - Generate simple ASCII-style text.
+278. !chatbotmode [ch]    - Enable echo-mode in a specific channel.
