@@ -7,4 +7,3 @@ Flask
 PyNaCl
 davey
 yt-dlp
-PyNaCl
