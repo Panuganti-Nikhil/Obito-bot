@@ -6,6 +6,7 @@ from discord.ext import commands
 import os, sys, subprocess, textwrap, io, contextlib, asyncio, json, random, datetime, aiohttp, re, base64, string
 from collections import Counter
 import pyfiglet
+import yt_dlp
 """
 
 def process_code(code):
@@ -17,10 +18,10 @@ def process_code(code):
     code = re.sub(r'\n\s*\n', '\n\n', code)
     return code.strip()
 
-with open(r'e:\Discord Bots\Ash Music\AdminBot\cmds.py', 'w', encoding='utf-8') as out:
+with open('cmds.py', 'w', encoding='utf-8') as out:
     out.write(base_imports + "\n\n")
     
-    old_dir = r'e:\Discord Bots\Ash Music\AdminBot\old_cmds_folder'
+    old_dir = 'old_cmds_folder'
     for file in os.listdir(old_dir):
         if file.endswith('.py') and file != '__init__.py':
             out.write(f"# {'='*40}\n# {file}\n# {'='*40}\n")
@@ -30,7 +31,7 @@ with open(r'e:\Discord Bots\Ash Music\AdminBot\cmds.py', 'w', encoding='utf-8') 
             
     # Extended features
     out.write(f"# {'='*40}\n# EXTENDED FEATURES\n# {'='*40}\n")
-    with open(r'e:\Discord Bots\Ash Music\AdminBot\extented_features.txt', 'r', encoding='utf-8') as f:
+    with open('extented_features.txt', 'r', encoding='utf-8') as f:
         content = f.read()
         
     blocks = re.split(r'# ={60}\n# cogs/(\w+\.py)\n# ={60}', content)
@@ -42,12 +43,12 @@ with open(r'e:\Discord Bots\Ash Music\AdminBot\cmds.py', 'w', encoding='utf-8') 
         out.write("\n\n")
 
 # Append the final setup function
-with open(r'e:\Discord Bots\Ash Music\AdminBot\cmds.py', 'r', encoding='utf-8') as f:
+with open('cmds.py', 'r', encoding='utf-8') as f:
     full_code = f.read()
 
 class_names = re.findall(r'^class\s+(\w+)\(commands\.Cog', full_code, re.MULTILINE)
 
-with open(r'e:\Discord Bots\Ash Music\AdminBot\cmds.py', 'a', encoding='utf-8') as out:
+with open('cmds.py', 'a', encoding='utf-8') as out:
     out.write("async def setup(bot: commands.Bot):\n")
     for c in class_names:
         out.write(f"    await bot.add_cog({c}(bot))\n")

