@@ -468,3 +468,14 @@ Prefix: !
 385. !crash                - Fetch a random anime-style reaction/image for this action.
 386. !bump                 - Fetch a random anime-style reaction/image for this action.
 387. !huggle               - Fetch a random anime-style reaction/image for this action.
+
+[ MUSIC ]
+393. !play <query>       - Plays a song from YouTube or a URL.
+394. !pause              - Pauses the currently playing track.
+395. !resume             - Resumes a paused track.
+396. !skip               - Skips the current track.
+397. !stop               - Stops playback and disconnects the bot.
+398. !volume <int>       - Changes the volume (0-100).
+399. !nowplaying         - Shows the currently playing track.
+400. !musicpanel         - Spawns the interactive music control panel (Play/Pause, Skip, Stop).
+401. !join [channel]     - Summons the bot to a voice channel.

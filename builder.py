@@ -6,6 +6,7 @@ from discord.ext import commands
 import os, sys, subprocess, textwrap, io, contextlib, asyncio, json, random, datetime, aiohttp, re, base64, string
 from collections import Counter
 import pyfiglet
+import yt_dlp
 """
 
 def process_code(code):
